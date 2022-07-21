@@ -24,7 +24,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.ParcelUuid;
-import android.util.Log;
 import android.view.View;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -32,7 +31,6 @@ import android.widget.TextView;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.UUID;
 
 public class MainActivity extends AppCompatActivity {
@@ -173,7 +171,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         UUID serviceUUID = UUID.fromString(this.SERVICE_UUID);
-        UUID[] serviceUUIDs = new UUID[]{serviceUUID};
 
         ScanFilter filter = new ScanFilter.Builder()
                 .setServiceUuid(new ParcelUuid(serviceUUID))
