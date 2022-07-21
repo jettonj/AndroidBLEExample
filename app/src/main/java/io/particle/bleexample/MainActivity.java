@@ -29,6 +29,7 @@ import android.view.View;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -72,8 +73,7 @@ public class MainActivity extends AppCompatActivity {
             public void onScanResult(int callbackType, ScanResult result) {
                 super.onScanResult(callbackType, result);
 
-                BluetoothDevice device = result.getDevice();
-                self.addDevice(device);
+                self.addDevice(result);
             }
         };
     }
@@ -196,10 +196,20 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
-    private void addDevice(BluetoothDevice device) {
+    private void addDevice(ScanResult result) {
+        BluetoothDevice device = result.getDevice();
+
+        byte[] manufacturerDataBytes = result.getScanRecord().getManufacturerSpecificData(1634);
+        String manufacturerData = new String(manufacturerDataBytes, StandardCharsets.UTF_8);
+        String deviceName = result.getScanRecord().getDeviceName();
+        if (!deviceName.endsWith(this.setupCode) && !manufacturerData.endsWith(this.setupCode)) {
+            this.log("Found " + deviceName + " but it's not matching the setup code");
+            return;
+        }
+
         if (!this.foundDevices.contains(device)) {
             this.foundDevices.add(device);
-            this.log("Found " + device.getAlias() + " [" + device.getAddress() + "]");
+            this.log("Found " + deviceName + " [" + device.getAddress() + "]");
 
             // We're connecting to the first found device, no need to scan further
             this.bluetoothLeScanner.stopScan(this.scanCallback);
