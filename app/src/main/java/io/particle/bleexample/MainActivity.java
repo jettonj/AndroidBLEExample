@@ -14,6 +14,8 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
@@ -54,6 +56,10 @@ public class MainActivity extends AppCompatActivity {
     private ScanCallback scanCallback;
     private ArrayList<BluetoothDevice> foundDevices;
     private BluetoothGattCallback bluetoothGattCallback;
+
+    private BluetoothGattCharacteristic txCharacteristic;
+    private BluetoothGattCharacteristic rxCharacteristic;
+    private BluetoothGattCharacteristic versionCharacteristic;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -162,12 +168,40 @@ public class MainActivity extends AppCompatActivity {
         }
 
         gatt.getServices().forEach(bluetoothGattService -> {
-            this.log(bluetoothGattService.getUuid() + " has " + bluetoothGattService.getCharacteristics().size() + " characteristics");
+            this.log(bluetoothGattService.getUuid() + "\n  Has " + bluetoothGattService.getCharacteristics().size() + " characteristics");
 
             if (bluetoothGattService.getUuid().equals(serviceUUID)) {
                 this.log("Found the communication service!");
+                this.ensureCharacteristics(bluetoothGattService);
             }
         });
+    }
+
+    public void ensureCharacteristics(BluetoothGattService service) {
+        this.txCharacteristic = service.getCharacteristic(this.txCharUUID);
+        this.rxCharacteristic = service.getCharacteristic(this.rxCharUUID);
+        this.versionCharacteristic = service.getCharacteristic(this.versionCharUUID);
+
+        if (this.txCharacteristic == null ||
+                (((this.txCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) &&
+                ((this.txCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0))) {
+            this.log("The write characteristic was not found or is not writable");
+            return;
+        }
+
+        if (this.rxCharacteristic == null ||
+                ((this.rxCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0)) {
+            this.log("The read characteristic was not found or does not notify");
+            return;
+        }
+
+        if (this.versionCharacteristic == null ||
+                ((this.versionCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) == 0)) {
+            this.log("The write characteristic was not found or is not readable");
+            return;
+        }
+
+        this.log("All necessary characteristics were found!");
     }
 
     @RequiresApi(api = Build.VERSION_CODES.M)
