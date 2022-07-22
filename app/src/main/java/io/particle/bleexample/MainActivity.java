@@ -12,6 +12,8 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
@@ -41,16 +43,17 @@ public class MainActivity extends AppCompatActivity {
     // Mobile secret available on the QR sticker on the device
     private String mobileSecret = "U6RWB9YCSHKV5V9";
     // UUIDs defined in the firmware
-    private String SERVICE_UUID = "6e400021-b5a3-f393-e0a9-e50e24dcca9e";
-    private String VERSION_CHAR_UUID = "6e400024-b5a3-f393-e0a9-e50e24dcca9e";
-    private String TX_CHAR_UUID = "6e400022-b5a3-f393-e0a9-e50e24dcca9e";
-    private String RX_CHAR_UUID = "6e400023-b5a3-f393-e0a9-e50e24dcca9e";
+    private UUID serviceUUID = UUID.fromString("6e400021-b5a3-f393-e0a9-e50e24dcca9e");
+    private UUID txCharUUID = UUID.fromString("6e400022-b5a3-f393-e0a9-e50e24dcca9e");
+    private UUID rxCharUUID = UUID.fromString("6e400023-b5a3-f393-e0a9-e50e24dcca9e");
+    private UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
 
     private BluetoothManager bluetoothManager;
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothLeScanner;
     private ScanCallback scanCallback;
     private ArrayList<BluetoothDevice> foundDevices;
+    private BluetoothGattCallback bluetoothGattCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -72,6 +75,22 @@ public class MainActivity extends AppCompatActivity {
                 super.onScanResult(callbackType, result);
 
                 self.addDevice(result);
+            }
+        };
+
+        bluetoothGattCallback = new BluetoothGattCallback() {
+            @Override
+            public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+                super.onConnectionStateChange(gatt, status, newState);
+
+                runOnUiThread(() -> self.onConnectionStateChange(gatt, status, newState));
+            }
+
+            @Override
+            public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+                super.onServicesDiscovered(gatt, status);
+
+                runOnUiThread(() -> self.onServicesDiscovered(gatt, status));
             }
         };
     }
@@ -115,6 +134,40 @@ public class MainActivity extends AppCompatActivity {
                 this.startBleScan();
             }
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+        String deviceAddress = gatt.getDevice().getAddress();
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            if (newState == BluetoothGatt.STATE_CONNECTED) {
+                this.log("Connected to " + deviceAddress + "!");
+                gatt.discoverServices();
+            } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
+                this.log("Disconnected from " + deviceAddress + "!");
+            }
+        } else {
+            this.log("Error " + status + " occurred for " + deviceAddress);
+            gatt.close();
+        }
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.N)
+    public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+        this.log("Finished discovering services");
+
+        if (gatt.getServices().isEmpty()) {
+            this.log("No services found!");
+            return;
+        }
+
+        gatt.getServices().forEach(bluetoothGattService -> {
+            this.log(bluetoothGattService.getUuid() + " has " + bluetoothGattService.getCharacteristics().size() + " characteristics");
+
+            if (bluetoothGattService.getUuid().equals(serviceUUID)) {
+                this.log("Found the communication service!");
+            }
+        });
     }
 
     @RequiresApi(api = Build.VERSION_CODES.M)
@@ -170,8 +223,6 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        UUID serviceUUID = UUID.fromString(this.SERVICE_UUID);
-
         ScanFilter filter = new ScanFilter.Builder()
                 .setServiceUuid(new ParcelUuid(serviceUUID))
                 .build();
@@ -218,5 +269,6 @@ public class MainActivity extends AppCompatActivity {
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void connect(BluetoothDevice device) {
         this.log("Connecting to " + device.getAlias() + "...");
+        device.connectGatt(getApplicationContext(), false, this.bluetoothGattCallback);
     }
 }
