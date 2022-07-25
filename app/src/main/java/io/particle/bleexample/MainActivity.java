@@ -1,5 +1,7 @@
 package io.particle.bleexample;
 
+import static android.bluetooth.BluetoothGattCharacteristic.FORMAT_UINT8;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
@@ -92,11 +94,19 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> self.onConnectionStateChange(gatt, status, newState));
             }
 
+            @RequiresApi(api = Build.VERSION_CODES.N)
             @Override
             public void onServicesDiscovered(BluetoothGatt gatt, int status) {
                 super.onServicesDiscovered(gatt, status);
 
                 runOnUiThread(() -> self.onServicesDiscovered(gatt, status));
+            }
+
+            @Override
+            public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, int status) {
+                super.onCharacteristicRead(gatt, characteristic, status);
+
+                runOnUiThread(() -> self.onCharacteristicRead(gatt, characteristic, status));
             }
         };
     }
@@ -158,6 +168,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.N)
     public void onServicesDiscovered(BluetoothGatt gatt, int status) {
         this.log("Finished discovering services");
@@ -172,12 +183,33 @@ public class MainActivity extends AppCompatActivity {
 
             if (bluetoothGattService.getUuid().equals(serviceUUID)) {
                 this.log("Found the communication service!");
-                this.ensureCharacteristics(bluetoothGattService);
+                if (this.ensureCharacteristics(bluetoothGattService)) {
+                    this.log("Checking the protocol version...");
+                    if (!gatt.readCharacteristic(this.versionCharacteristic)) {
+                        this.log("Failed to read the version");
+                    }
+                }
             }
         });
     }
 
-    public void ensureCharacteristics(BluetoothGattService service) {
+    public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, int status) {
+        this.log("onCharacteristicRead");
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            Integer version = characteristic.getIntValue(FORMAT_UINT8, 0);
+
+            if (version != 2) {
+                this.log("Protocol version " + version + " is not supported");
+                return;
+            }
+        } else if (status == BluetoothGatt.GATT_READ_NOT_PERMITTED) {
+            this.log("Read not permitted for " + characteristic.getUuid());
+        } else {
+            this.log("Characteristic read failed for " + characteristic.getUuid() + ": " + status);
+        }
+    }
+
+    public boolean ensureCharacteristics(BluetoothGattService service) {
         this.txCharacteristic = service.getCharacteristic(this.txCharUUID);
         this.rxCharacteristic = service.getCharacteristic(this.rxCharUUID);
         this.versionCharacteristic = service.getCharacteristic(this.versionCharUUID);
@@ -186,22 +218,23 @@ public class MainActivity extends AppCompatActivity {
                 (((this.txCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) &&
                 ((this.txCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0))) {
             this.log("The write characteristic was not found or is not writable");
-            return;
+            return false;
         }
 
         if (this.rxCharacteristic == null ||
                 ((this.rxCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0)) {
             this.log("The read characteristic was not found or does not notify");
-            return;
+            return false;
         }
 
         if (this.versionCharacteristic == null ||
                 ((this.versionCharacteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) == 0)) {
             this.log("The write characteristic was not found or is not readable");
-            return;
+            return false;
         }
 
         this.log("All necessary characteristics were found!");
+        return true;
     }
 
     @RequiresApi(api = Build.VERSION_CODES.M)
