@@ -108,6 +108,13 @@ public class MainActivity extends AppCompatActivity {
 
                 runOnUiThread(() -> self.onCharacteristicRead(gatt, characteristic, status));
             }
+
+            @Override
+            public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic) {
+                super.onCharacteristicChanged(gatt, characteristic);
+
+                // TODO: Send to the request channel
+            }
         };
     }
 
@@ -193,6 +200,7 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    @SuppressLint("MissingPermission")
     public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, int status) {
         this.log("onCharacteristicRead");
         if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -202,6 +210,13 @@ public class MainActivity extends AppCompatActivity {
                 this.log("Protocol version " + version + " is not supported");
                 return;
             }
+
+            if (!gatt.setCharacteristicNotification(this.rxCharacteristic, true)) {
+                this.log("Failed to subscribe to incoming data");
+                return;
+            }
+
+            this.openControlChannel();
         } else if (status == BluetoothGatt.GATT_READ_NOT_PERMITTED) {
             this.log("Read not permitted for " + characteristic.getUuid());
         } else {
@@ -337,5 +352,9 @@ public class MainActivity extends AppCompatActivity {
     private void connect(BluetoothDevice device) {
         this.log("Connecting to " + device.getAlias() + "...");
         device.connectGatt(getApplicationContext(), false, this.bluetoothGattCallback);
+    }
+
+    private void openControlChannel() {
+        // TODO: Implement once the control channel is done
     }
 }
