@@ -34,10 +34,14 @@ import android.view.View;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.google.protobuf.InvalidProtocolBufferException;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.UUID;
+
+import io.particle.firmwareprotos.ctrl.wifi.WifiNew;
 
 public class MainActivity extends AppCompatActivity {
     private String logs;
@@ -202,7 +206,6 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint("MissingPermission")
     public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, int status) {
-        this.log("onCharacteristicRead");
         if (status == BluetoothGatt.GATT_SUCCESS) {
             Integer version = characteristic.getIntValue(FORMAT_UINT8, 0);
 
@@ -355,6 +358,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void openControlChannel() {
+        this.log("Ready to open the control channel");
         // TODO: Implement once the control channel is done
+        // TODO: Scan the WiFi networks once the control channel is open
+    }
+
+    private void scanWifiNetworks() throws InvalidProtocolBufferException {
+        WifiNew.ScanNetworksRequest request = WifiNew.ScanNetworksRequest.newBuilder().build();
+        // TODO: Send the request to the device and store the reply
+        byte[] replyData = new byte[0];
+        WifiNew.ScanNetworksReply reply = WifiNew.ScanNetworksReply.parseFrom(replyData);
+
+        this.log("Found " + reply.getNetworksCount() + " networks");
+        for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
+            this.log("  " + network.getSsid() + " [" + network.getBssid() + "] " + network.getRssi() + "dB");
+        }
     }
 }
