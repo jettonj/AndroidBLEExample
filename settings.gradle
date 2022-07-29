@@ -16,3 +16,4 @@ rootProject.name = "BLE Example"
 include ':app'
 include ':firmwareprotos'
 include ':controlrequestchannel'
+include ':ecjpake'
