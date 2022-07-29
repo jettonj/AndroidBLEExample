@@ -41,6 +41,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.UUID;
 
+import io.particle.controlrequestchannel.ControlRequestChannel;
+import io.particle.controlrequestchannel.Stream;
 import io.particle.firmwareprotos.ctrl.wifi.WifiNew;
 
 public class MainActivity extends AppCompatActivity {
@@ -59,6 +61,7 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothManager bluetoothManager;
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothLeScanner;
+    private BluetoothGatt bluetoothGatt;
     private ScanCallback scanCallback;
     private ArrayList<BluetoothDevice> foundDevices;
     private BluetoothGattCallback bluetoothGattCallback;
@@ -66,6 +69,9 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothGattCharacteristic txCharacteristic;
     private BluetoothGattCharacteristic rxCharacteristic;
     private BluetoothGattCharacteristic versionCharacteristic;
+
+    private Stream stream;
+    private ControlRequestChannel controlRequestChannel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,6 +87,21 @@ public class MainActivity extends AppCompatActivity {
         this.log("Press Connect to start");
         MainActivity self = this;
 
+        stream = new Stream() {
+            @RequiresApi(api = 33)
+            @SuppressLint("MissingPermission")
+            public void write(byte[] data) {
+                if (self.bluetoothGatt != null && self.txCharacteristic != null) {
+                    self.bluetoothGatt.writeCharacteristic(self.txCharacteristic, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+                }
+            }
+        };
+        try {
+            controlRequestChannel = new ControlRequestChannel(stream, mobileSecret);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
         scanCallback = new ScanCallback() {
             @Override
             public void onScanResult(int callbackType, ScanResult result) {
@@ -95,6 +116,7 @@ public class MainActivity extends AppCompatActivity {
             public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
                 super.onConnectionStateChange(gatt, status, newState);
 
+                self.bluetoothGatt = gatt;
                 runOnUiThread(() -> self.onConnectionStateChange(gatt, status, newState));
             }
 
@@ -117,7 +139,7 @@ public class MainActivity extends AppCompatActivity {
             public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic) {
                 super.onCharacteristicChanged(gatt, characteristic);
 
-                // TODO: Send to the request channel
+                stream.data(characteristic.getValue());
             }
         };
     }
