@@ -42,6 +42,7 @@ import java.util.Arrays;
 import java.util.UUID;
 
 import io.particle.controlrequestchannel.ControlRequestChannel;
+import io.particle.controlrequestchannel.ControlRequestChannelCallback;
 import io.particle.controlrequestchannel.Stream;
 import io.particle.firmwareprotos.ctrl.wifi.WifiNew;
 
@@ -72,6 +73,7 @@ public class MainActivity extends AppCompatActivity {
 
     private Stream stream;
     private ControlRequestChannel controlRequestChannel;
+    private ControlRequestChannelCallback controlRequestChannelCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -96,8 +98,16 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         };
+        controlRequestChannelCallback = new ControlRequestChannelCallback() {
+            @Override
+            public void onOpen() {
+                super.onOpen();
+
+                self.onRequestChannelOpen();
+            }
+        };
         try {
-            controlRequestChannel = new ControlRequestChannel(stream, mobileSecret);
+            controlRequestChannel = new ControlRequestChannel(stream, mobileSecret, controlRequestChannelCallback);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -250,6 +260,11 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    public void onRequestChannelOpen() {
+        this.log("Request channel opened! Scanning for WiFi networks...");
+        this.scanWifiNetworks();
+    }
+
     public boolean ensureCharacteristics(BluetoothGattService service) {
         this.txCharacteristic = service.getCharacteristic(this.txCharUUID);
         this.rxCharacteristic = service.getCharacteristic(this.rxCharUUID);
@@ -383,15 +398,19 @@ public class MainActivity extends AppCompatActivity {
 
     private void openControlChannel() {
         this.log("Ready to open the control channel");
-        // TODO: Implement once the control channel is done
-        // TODO: Scan the WiFi networks once the control channel is open
+        this.controlRequestChannel.open();
     }
 
-    private void scanWifiNetworks() throws InvalidProtocolBufferException {
+    private void scanWifiNetworks() {
         WifiNew.ScanNetworksRequest request = WifiNew.ScanNetworksRequest.newBuilder().build();
         // TODO: Send the request to the device and store the reply
         byte[] replyData = new byte[0];
-        WifiNew.ScanNetworksReply reply = WifiNew.ScanNetworksReply.parseFrom(replyData);
+        WifiNew.ScanNetworksReply reply = null;
+        try {
+            reply = WifiNew.ScanNetworksReply.parseFrom(replyData);
+        } catch (InvalidProtocolBufferException e) {
+            e.printStackTrace();
+        }
 
         this.log("Found " + reply.getNetworksCount() + " networks");
         for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {

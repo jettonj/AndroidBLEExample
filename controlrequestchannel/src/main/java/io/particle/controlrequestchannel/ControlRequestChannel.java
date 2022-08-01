@@ -35,6 +35,7 @@ public class ControlRequestChannel {
     private Stream _stream;
     private StreamEventListener _streamEventListener;
     private String _preSecret;
+    private ControlRequestChannelCallback _callback;
     private int _maxConcurReqs;
     private int _requestTimeout;
     private int _handshakeTimeout;
@@ -52,6 +53,7 @@ public class ControlRequestChannel {
     public ControlRequestChannel(
             Stream stream,
             String secret,
+            ControlRequestChannelCallback callback,
             int concurrentRequests,
             int requestTimeout,
             int handshakeTimeout
@@ -79,6 +81,10 @@ public class ControlRequestChannel {
             throw new Exception("Secret is empty");
         }
         this._preSecret = secret;
+        if (callback == null) {
+            throw new Exception("Invalid callback");
+        }
+        this._callback = callback;
         this._maxConcurReqs = concurrentRequests;
         if (requestTimeout < 0 || handshakeTimeout < 0) {
             throw new Exception("Invalid timeout value");
@@ -92,8 +98,14 @@ public class ControlRequestChannel {
 
     public ControlRequestChannel(
             Stream stream,
-            String secret
+            String secret,
+            ControlRequestChannelCallback callback
     ) throws Exception {
-        this(stream, secret, DEFAULT_MAX_CONCURRENT_REQUESTS, DEFAULT_REQUEST_TIMEOUT, DEFAULT_HANDSHAKE_TIMEOUT);
+        this(stream, secret, callback, DEFAULT_MAX_CONCURRENT_REQUESTS, DEFAULT_REQUEST_TIMEOUT, DEFAULT_HANDSHAKE_TIMEOUT);
+    }
+
+    public void open() {
+        // TODO: Implement opening
+        this._callback.onOpen();
     }
 }
