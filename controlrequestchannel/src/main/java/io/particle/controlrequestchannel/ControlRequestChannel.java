@@ -1,6 +1,12 @@
 package io.particle.controlrequestchannel;
 
+import java.io.ByteArrayOutputStream;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.Map;
+import java.util.Random;
+
+import io.particle.ecjpake.EcJpake;
 
 public class ControlRequestChannel {
     private static final int DEFAULT_HANDSHAKE_TIMEOUT = 10000;
@@ -49,6 +55,9 @@ public class ControlRequestChannel {
     private int _lastServCtr;
     private boolean _sending;
     private boolean _receiving;
+    private EcJpake _jpake;
+    private MessageDigest _cliHash;
+    private MessageDigest _servHash;
 
     public ControlRequestChannel(
             Stream stream,
@@ -104,8 +113,41 @@ public class ControlRequestChannel {
         this(stream, secret, callback, DEFAULT_MAX_CONCURRENT_REQUESTS, DEFAULT_REQUEST_TIMEOUT, DEFAULT_HANDSHAKE_TIMEOUT);
     }
 
-    public void open() {
+    public void open() throws Exception {
+        if (this._channelState != ChannelState.NEW) {
+            throw new Exception("Invalid state");
+        }
+        this._channelState = ChannelState.OPENING;
+        this._handshakeState = HandshakeState.ROUND_1;
+
+        // Initialize ECJPAKE with random seed
+        Random rand = new Random();
+        SecureRandom secRand = new SecureRandom();
+        int pwdLen = rand.nextInt(100) + 1;
+        byte[] pwd = new byte[pwdLen];
+        secRand.nextBytes(pwd);
+        this._jpake = new EcJpake(EcJpake.Role.CLIENT, this._preSecret.getBytes(), secRand);
+
+        this._preSecret = null;
+
+        ByteArrayOutputStream cliRound1 = new ByteArrayOutputStream();
+        this._jpake.writeRound1(cliRound1);
+
+        this._cliHash = MessageDigest.getInstance("SHA-256");
+        this._servHash = MessageDigest.getInstance("SHA-256");
+        this._cliHash.update(cliRound1.toByteArray());
+        this._servHash.update(cliRound1.toByteArray());
+
         // TODO: Implement opening
         this._callback.onOpen();
+    }
+
+    private void _sendHandshake(ByteArrayOutputStream payload) {
+        byte[] packet = new byte[payload.size() + HANDSHAKE_PACKET_OVERHEAD];
+        System.arraycopy(payload.toByteArray(), 0, packet, 0, payload.size());
+        // I'm, not sure what this double write to the packet does:
+        // util.writeUint16Le(packet, payload.length, 0);
+        // packet.set(payload, 2);
+        this._stream.write(packet);
     }
 }
