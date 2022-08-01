@@ -33,6 +33,7 @@ public class ControlRequestChannel {
     private ChannelState _channelState = ChannelState.NEW;
     private HandshakeState _handshakeState = HandshakeState.ROUND_1;
     private Stream _stream;
+    private StreamEventListener _streamEventListener;
     private String _preSecret;
     private int _maxConcurReqs;
     private int _requestTimeout;
@@ -59,6 +60,21 @@ public class ControlRequestChannel {
             throw new Exception("Please specify the input and output stream");
         }
         this._stream = stream;
+        this._streamEventListener = new StreamEventListener() {
+            void onData(byte[] data) {
+                // TODO: Implement
+            }
+
+            void onClose() {
+                // TODO: Implement
+            }
+
+            void onError() {
+                // TODO: Implement
+            }
+
+        };
+        this._stream.addListener(this._streamEventListener);
         if (secret == null || secret.length() == 0) {
             throw new Exception("Secret is empty");
         }

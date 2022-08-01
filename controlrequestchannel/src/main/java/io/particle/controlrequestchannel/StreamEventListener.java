@@ -2,8 +2,16 @@ package io.particle.controlrequestchannel;
 
 import java.util.EventListener;
 
-public interface StreamEventListener extends EventListener {
-    void onData(byte[] data);
-    void onClose();
-    void onError();
+public abstract class StreamEventListener implements EventListener {
+    void onData(byte[] data) {
+        throw new RuntimeException("Stub!");
+    }
+
+    void onClose() {
+        throw new RuntimeException("Stub!");
+    }
+
+    void onError() {
+        throw new RuntimeException("Stub!");
+    }
 }
