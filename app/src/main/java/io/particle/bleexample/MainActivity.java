@@ -49,14 +49,14 @@ public class MainActivity extends AppCompatActivity {
     private String logs;
 
     // Device setup code. By default, 6 characters of the serial number
-    private String setupCode = "HMCS78";
+    private final String setupCode = "HMCS78";
     // Mobile secret available on the QR sticker on the device
-    private String mobileSecret = "U6RWB9YCSHKV5V9";
+    private final String mobileSecret = "U6RWB9YCSHKV5V9";
     // UUIDs defined in the firmware
-    private UUID serviceUUID = UUID.fromString("6e400021-b5a3-f393-e0a9-e50e24dcca9e");
-    private UUID txCharUUID = UUID.fromString("6e400022-b5a3-f393-e0a9-e50e24dcca9e");
-    private UUID rxCharUUID = UUID.fromString("6e400023-b5a3-f393-e0a9-e50e24dcca9e");
-    private UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID serviceUUID = UUID.fromString("6e400021-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID txCharUUID = UUID.fromString("6e400022-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID rxCharUUID = UUID.fromString("6e400023-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
 
     private BluetoothManager bluetoothManager;
     private BluetoothAdapter bluetoothAdapter;
@@ -103,6 +103,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         scanCallback = new ScanCallback() {
+            @RequiresApi(api = Build.VERSION_CODES.R)
             @Override
             public void onScanResult(int callbackType, ScanResult result) {
                 super.onScanResult(callbackType, result);
@@ -171,7 +172,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.N)
+    @RequiresApi(api = Build.VERSION_CODES.S)
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
@@ -277,7 +278,7 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.M)
+    @RequiresApi(api = Build.VERSION_CODES.S)
     public void onClick(View view) {
         this.log("\nLooking for " + this.setupCode + "...");
 
@@ -288,6 +289,7 @@ public class MainActivity extends AppCompatActivity {
         return ContextCompat.checkSelfPermission(this, permissionType) == PackageManager.PERMISSION_GRANTED;
     }
 
+    @RequiresApi(api = Build.VERSION_CODES.S)
     private boolean ensurePermissions() {
         boolean isPermissionGranted =
                 this.hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) &&
@@ -312,14 +314,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void log(String line) {
         this.logs += line + "\n";
-        TextView textView = (TextView) findViewById(R.id.textView);
+        TextView textView = findViewById(R.id.textView);
         textView.setText(this.logs);
-        ScrollView scrollView = (ScrollView) findViewById(R.id.scrollView);
+        ScrollView scrollView = findViewById(R.id.scrollView);
         scrollView.fullScroll(View.FOCUS_DOWN);
     }
 
     @SuppressLint("MissingPermission")
-    @RequiresApi(api = Build.VERSION_CODES.M)
+    @RequiresApi(api = Build.VERSION_CODES.S)
     private void startBleScan() {
         if (!this.ensurePermissions()) {
             return;
@@ -343,7 +345,7 @@ public class MainActivity extends AppCompatActivity {
                 .build();
 
         this.bluetoothLeScanner.startScan(
-                Arrays.asList(new ScanFilter[]{filter}),
+                Arrays.asList(filter),
                 scanSettings,
                 scanCallback
         );
