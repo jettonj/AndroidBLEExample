@@ -1,8 +1,11 @@
 package io.particle.controlrequestchannel;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Random;
 
@@ -149,5 +152,48 @@ public class ControlRequestChannel {
         // util.writeUint16Le(packet, payload.length, 0);
         // packet.set(payload, 2);
         this._stream.write(packet);
+    }
+
+    private void _streamData(byte[] chunk) {
+        if (this._channelState != ChannelState.OPEN && this._channelState != ChannelState.OPENING) {
+            return;
+        }
+        if (this._receiving) {
+            return;
+        }
+        this._receiving = true;
+
+        try {
+            for (;;) {
+                if (this._recvBuf.length < 2) {
+                    break;
+                }
+                // TODO: Check if this readUint16Le() replacement works
+                ByteBuffer bb = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN);
+                short payloadLen = bb.getShort();
+                boolean isResp = this._channelState == ChannelState.OPEN;
+                int packetLen = payloadLen + (isResp ? RESPONSE_PACKET_OVERHEAD : HANDSHAKE_PACKET_OVERHEAD);
+                if (this._recvBuf.length < packetLen) {
+                    break;
+                }
+				byte[] packet = Arrays.copyOf(this._recvBuf, packetLen);
+                if (isResp) {
+                    this._recvResponse(packet);
+                } else {
+                    this._recvHandshake(packet);
+                }
+                this._recvBuf = Arrays.copyOfRange(this._recvBuf, packetLen, this._recvBuf.length - packetLen);
+            }
+        } finally {
+            this._receiving = false;
+        }
+    }
+
+    private void _recvResponse(byte[] packet) {
+        // TODO: Implement
+    }
+
+    private void _recvHandshake(byte[] packet) {
+        // TODO: Implement
     }
 }

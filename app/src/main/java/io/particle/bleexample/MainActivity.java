@@ -398,7 +398,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void openControlChannel() {
         this.log("Ready to open the control channel");
-        this.controlRequestChannel.open();
+        try {
+            this.controlRequestChannel.open();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void scanWifiNetworks() {
