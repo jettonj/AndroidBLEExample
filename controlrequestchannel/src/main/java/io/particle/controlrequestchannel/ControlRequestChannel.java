@@ -141,16 +141,13 @@ public class ControlRequestChannel {
         this._cliHash.update(cliRound1.toByteArray());
         this._servHash.update(cliRound1.toByteArray());
 
-        // TODO: Implement opening
         this._callback.onOpen();
     }
 
     private void _sendHandshake(ByteArrayOutputStream payload) {
         byte[] packet = new byte[payload.size() + HANDSHAKE_PACKET_OVERHEAD];
-        System.arraycopy(payload.toByteArray(), 0, packet, 0, payload.size());
-        // I'm, not sure what this double write to the packet does:
-        // util.writeUint16Le(packet, payload.length, 0);
-        // packet.set(payload, 2);
+        this._writeUint16Le(packet, (short) payload.size(), 0);
+        System.arraycopy(payload.toByteArray(), 0, packet, 2, payload.size());
         this._stream.write(packet);
     }
 
@@ -189,11 +186,35 @@ public class ControlRequestChannel {
         }
     }
 
+    private byte[] _genNonce(byte[] fixed, int ctr, boolean isResp) {
+		byte[] nonce = new byte[fixed.length + 4];
+        if (isResp) {
+            ctr = (ctr | 0x80000000) >>> 0;
+        }
+        this._writeUint32Le(nonce, ctr, 0);
+        System.arraycopy(fixed, 0, nonce, 4, fixed.length);
+        return nonce;
+    }
+
     private void _recvResponse(byte[] packet) {
-        // TODO: Implement
+        byte[] enc = Arrays.copyOfRange(packet, 2, packet.length);
+        byte[] addData = Arrays.copyOfRange(packet, 0, 2);
+        byte[] nonce = this._genNonce(this._servNonce, ++this._lastServCtr, true /* isResp */);
     }
 
     private void _recvHandshake(byte[] packet) {
         // TODO: Implement
+    }
+
+    private void _writeUint16Le(byte[] destination, short value, int offset) {
+        byte[] bytes = new byte[4];
+        ByteBuffer.wrap(bytes).putShort(value);
+        System.arraycopy(bytes, 0, bytes, offset, bytes.length);
+    }
+
+    private void _writeUint32Le(byte[] destination, long value, int offset) {
+        byte[] bytes = new byte[8];
+        ByteBuffer.wrap(bytes).putLong(value);
+        System.arraycopy(bytes, 0, bytes, offset, bytes.length);
     }
 }
