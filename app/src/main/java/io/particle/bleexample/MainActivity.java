@@ -94,7 +94,9 @@ public class MainActivity extends AppCompatActivity {
             @SuppressLint("MissingPermission")
             public void write(byte[] data) {
                 if (self.bluetoothGatt != null && self.txCharacteristic != null) {
-                    self.bluetoothGatt.writeCharacteristic(self.txCharacteristic, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+                    self.txCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+                    self.txCharacteristic.setValue(data);
+                    self.bluetoothGatt.writeCharacteristic(self.txCharacteristic);
                 }
             }
         };
@@ -127,7 +129,6 @@ public class MainActivity extends AppCompatActivity {
             public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
                 super.onConnectionStateChange(gatt, status, newState);
 
-                self.bluetoothGatt = gatt;
                 runOnUiThread(() -> self.onConnectionStateChange(gatt, status, newState));
             }
 
@@ -136,6 +137,7 @@ public class MainActivity extends AppCompatActivity {
             public void onServicesDiscovered(BluetoothGatt gatt, int status) {
                 super.onServicesDiscovered(gatt, status);
 
+                self.bluetoothGatt = gatt;
                 runOnUiThread(() -> self.onServicesDiscovered(gatt, status));
             }
 

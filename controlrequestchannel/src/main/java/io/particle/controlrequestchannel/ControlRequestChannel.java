@@ -151,6 +151,7 @@ public class ControlRequestChannel {
         this._servHash = MessageDigest.getInstance("SHA-256");
         this._cliHash.update(cliRound1.toByteArray());
         this._servHash.update(cliRound1.toByteArray());
+        this._sendHandshake(cliRound1);
 
         this._callback.onOpen();
     }
