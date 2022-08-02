@@ -1,6 +1,8 @@
 package io.particle.controlrequestchannel;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.MessageDigest;
@@ -61,6 +63,7 @@ public class ControlRequestChannel {
     private EcJpake _jpake;
     private MessageDigest _cliHash;
     private MessageDigest _servHash;
+    private byte[] _secret;
 
     public ControlRequestChannel(
             Stream stream,
@@ -200,10 +203,51 @@ public class ControlRequestChannel {
         byte[] enc = Arrays.copyOfRange(packet, 2, packet.length);
         byte[] addData = Arrays.copyOfRange(packet, 0, 2);
         byte[] nonce = this._genNonce(this._servNonce, ++this._lastServCtr, true /* isResp */);
+        // TODO: Use the initialized AES
     }
 
     private void _recvHandshake(byte[] packet) {
-        // TODO: Implement
+        switch (this._handshakeState) {
+            case ROUND_1:
+                byte[] servRound1 = Arrays.copyOfRange(packet, 0, packet.length);
+
+                ByteArrayInputStream servRound1Stream = new ByteArrayInputStream(servRound1);
+                try {
+                    this._jpake.readRound1(servRound1Stream);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                this._cliHash.update(servRound1);
+                this._servHash.update(servRound1);
+                this._handshakeState = HandshakeState.ROUND_2;
+                break;
+            case ROUND_2:
+                byte[] servRound2 = Arrays.copyOfRange(packet, 0, packet.length);
+                ByteArrayInputStream servRound2Stream = new ByteArrayInputStream(servRound2);
+                try {
+                    this._jpake.readRound2(servRound2Stream);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                this._cliHash.update(servRound2);
+                this._servHash.update(servRound2);
+
+                ByteArrayOutputStream cliRound2 = new ByteArrayOutputStream();
+                try {
+                    this._jpake.writeRound2(cliRound2);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                this._cliHash.update(cliRound2.toByteArray());
+                this._servHash.update(cliRound2.toByteArray());
+                this._sendHandshake(cliRound2);
+
+                this._secret = this._jpake.deriveSecret();
+                // TODO: Port this._genConfirm()
+                break;
+            case CONFIRM:
+                break;
+        }
     }
 
     private void _writeUint16Le(byte[] destination, short value, int offset) {
