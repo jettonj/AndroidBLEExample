@@ -5,11 +5,16 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.security.InvalidKeyException;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Random;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import io.particle.ecjpake.EcJpake;
 
@@ -27,6 +32,9 @@ public class ControlRequestChannel {
 
     private static final int MAX_REQUEST_PAYLOAD_SIZE = 0xffff;
     private static final int MAX_REQUEST_ID = 0xffff;
+
+    private static final byte[] EC_JPAKE_CLIENT_ID = "client".getBytes();
+    private static final byte[] EC_JPAKE_SERVER_ID = "server".getBytes();
 
     private enum ChannelState {
         NEW,
@@ -243,11 +251,41 @@ public class ControlRequestChannel {
                 this._sendHandshake(cliRound2);
 
                 this._secret = this._jpake.deriveSecret();
-                // TODO: Port this._genConfirm()
+                byte[] cliConfirm = this._genConfirm(this._secret, this.EC_JPAKE_CLIENT_ID, this.EC_JPAKE_SERVER_ID, _cliHash.digest());
+                this._servHash.update(cliConfirm);
+                ByteArrayOutputStream cliConfirmStream = new ByteArrayOutputStream();
+                try {
+                    cliConfirmStream.write(cliConfirm);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                this._sendHandshake(cliConfirmStream);
+                this._handshakeState = HandshakeState.CONFIRM;
                 break;
             case CONFIRM:
                 break;
         }
+    }
+
+    private byte[] _genConfirm(byte[] secret, byte[] localId, byte[] remoteId, byte[] packetsHash) {
+        try {
+            MessageDigest keyDigestInstance = MessageDigest.getInstance("SHA-256");
+            keyDigestInstance.update(secret);
+            keyDigestInstance.update("JPAKE_KC".getBytes());
+            byte[] key = keyDigestInstance.digest();
+
+            SecretKeySpec secretKeySpec = new SecretKeySpec(key, "SHA-256");
+            Mac mac = Mac.getInstance("SHA-256");
+            mac.init(secretKeySpec);
+            mac.update("KC_1_U".getBytes());
+            mac.update(localId);
+            mac.update(remoteId);
+            mac.update(packetsHash);
+            return mac.doFinal();
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+            e.printStackTrace();
+        }
+        return new byte[0];
     }
 
     private void _writeUint16Le(byte[] destination, short value, int offset) {
