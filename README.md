@@ -14,6 +14,13 @@ This repo contains a very basic app that:
 
 **At this moment, the app is not doing the ECJPAKE handshake or the encryption yet.**
 
+To test this app, it's best to flash the app from [`firmware`](firmware/) directory to an Argon or P2 followed by updating the hardcoded values with ones from device.
+
+#### How to get the mobile secret/setup code?
+
+The setup code and mobile secret can be found by scanning the QR code on the device. It will have two lines. First one will contain the device's serial number. Last six digits of the serial number are the setup code.
+The second line contains the whole mobile secret.
+
 ### Generated protobuf module
 
 The [`firmwareprotos`](firmwareprotos) directory contains generated Java definitions for the [`device-os-protobuf`](https://github.com/particle-iot/device-os-protobuf) declarations. It allows easy encoding/decoding of the request/reply messages.
