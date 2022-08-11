@@ -32,6 +32,7 @@ public class ControlRequestChannel {
 
     private static final int MAX_REQUEST_PAYLOAD_SIZE = 0xffff;
     private static final int MAX_REQUEST_ID = 0xffff;
+    private static final int MAX_PACKET_SIZE = 244;
 
     private static final byte[] EC_JPAKE_CLIENT_ID = "client".getBytes();
     private static final byte[] EC_JPAKE_SERVER_ID = "server".getBytes();
@@ -157,9 +158,20 @@ public class ControlRequestChannel {
     }
 
     private void _sendHandshake(ByteArrayOutputStream payload) {
-        byte[] packet = new byte[payload.size() + HANDSHAKE_PACKET_OVERHEAD];
-        this._writeUint16Le(packet, (short) payload.size(), 0);
-        System.arraycopy(payload.toByteArray(), 0, packet, 2, payload.size());
+        int bytesLeft = payload.size();
+        while (bytesLeft > 0) {
+            int bytesToSend = bytesLeft > this.MAX_PACKET_SIZE ? this.MAX_PACKET_SIZE : bytesLeft;
+            byte[] chunk = new byte[bytesToSend];
+            System.arraycopy(payload.toByteArray(), payload.size() - bytesLeft, chunk, 0, bytesToSend);
+            this._writeToStream(chunk);
+            bytesLeft -= bytesToSend;
+        }
+    }
+
+    private void _writeToStream(byte[] payload) {
+        byte[] packet = new byte[payload.length + HANDSHAKE_PACKET_OVERHEAD];
+        System.arraycopy(payload, 0, packet, 2, payload.length);
+        this._writeUint16Le(packet, (short) payload.length, 0);
         this._stream.write(packet);
     }
 
@@ -292,12 +304,12 @@ public class ControlRequestChannel {
     private void _writeUint16Le(byte[] destination, short value, int offset) {
         byte[] bytes = new byte[4];
         ByteBuffer.wrap(bytes).putShort(value);
-        System.arraycopy(bytes, 0, bytes, offset, bytes.length);
+        System.arraycopy(bytes, 0, destination, offset, bytes.length);
     }
 
     private void _writeUint32Le(byte[] destination, long value, int offset) {
         byte[] bytes = new byte[8];
         ByteBuffer.wrap(bytes).putLong(value);
-        System.arraycopy(bytes, 0, bytes, offset, bytes.length);
+        System.arraycopy(bytes, 0, destination, offset, bytes.length);
     }
 }
