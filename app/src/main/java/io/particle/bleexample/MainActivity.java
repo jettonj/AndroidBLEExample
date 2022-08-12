@@ -37,13 +37,15 @@ import android.widget.TextView;
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Random;
 import java.util.UUID;
 
-import io.particle.controlrequestchannel.ControlRequestChannel;
-import io.particle.controlrequestchannel.ControlRequestChannelCallback;
-import io.particle.controlrequestchannel.Stream;
+import io.particle.device.control.BleRequestChannel;
+import io.particle.device.control.BleRequestChannelCallback;
+import io.particle.device.control.RequestError;
 import io.particle.firmwareprotos.ctrl.wifi.WifiNew;
 
 public class MainActivity extends AppCompatActivity {
@@ -59,6 +61,8 @@ public class MainActivity extends AppCompatActivity {
     private final UUID rxCharUUID = UUID.fromString("6e400023-b5a3-f393-e0a9-e50e24dcca9e");
     private final UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
 
+    private static final int MAX_PACKET_SIZE = 244;
+
     private BluetoothManager bluetoothManager;
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothLeScanner;
@@ -71,9 +75,11 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothGattCharacteristic rxCharacteristic;
     private BluetoothGattCharacteristic versionCharacteristic;
 
-    private Stream stream;
-    private ControlRequestChannel controlRequestChannel;
-    private ControlRequestChannelCallback controlRequestChannelCallback;
+    private BleRequestChannel requestChannel;
+    private BleRequestChannelCallback requestChannelCallback;
+
+    private int bytesLeft;
+    private byte[] outgoingData;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,27 +95,39 @@ public class MainActivity extends AppCompatActivity {
         this.log("Press Connect to start");
         MainActivity self = this;
 
-        stream = new Stream() {
+        this.requestChannelCallback = new BleRequestChannelCallback() {
+            @Override
+            public void onChannelOpen() {
+                self.onRequestChannelOpen();
+            }
+
+            @Override
             @RequiresApi(api = 33)
             @SuppressLint("MissingPermission")
-            public void write(byte[] data) {
-                if (self.bluetoothGatt != null && self.txCharacteristic != null) {
-                    self.txCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
-                    self.txCharacteristic.setValue(data);
-                    self.bluetoothGatt.writeCharacteristic(self.txCharacteristic);
-                }
+            public void onChannelWrite(byte[] data) {
+                self.outgoingData = data;
+                self.bytesLeft = data.length;
+                self.sendChunk();
             }
-        };
-        controlRequestChannelCallback = new ControlRequestChannelCallback() {
-            @Override
-            public void onOpen() {
-                super.onOpen();
 
-                self.onRequestChannelOpen();
+            @Override
+            public void onRequestResponse(int requestId, int result, byte[] data) {
+                self.log("onRequestResponse requestId: " + requestId + " result: " + result);
+            }
+
+            @Override
+            public void onRequestError(int requestId, RequestError error) {
+                self.log("onRequestError requestId: " + requestId);
             }
         };
         try {
-            controlRequestChannel = new ControlRequestChannel(stream, mobileSecret, controlRequestChannelCallback);
+            Random rand = new Random();
+            SecureRandom secRand = new SecureRandom();
+            int pwdLen = rand.nextInt(100) + 1;
+            byte[] pwd = new byte[pwdLen];
+            secRand.nextBytes(pwd);
+            this.requestChannel = new BleRequestChannel(mobileSecret.getBytes(), requestChannelCallback,
+                    BleRequestChannel.DEFAULT_MAX_CONCURRENT_REQUESTS, secRand);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -152,7 +170,16 @@ public class MainActivity extends AppCompatActivity {
             public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic) {
                 super.onCharacteristicChanged(gatt, characteristic);
 
-                stream.data(characteristic.getValue());
+                self.requestChannel.read(characteristic.getValue());
+            }
+
+            @Override
+            public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+                super.onCharacteristicWrite(gatt, characteristic, status);
+//                self.log("Wrote to characteristic status: " + status);
+                if (self.bytesLeft > 0) {
+                    self.sendChunk();
+                }
             }
         };
     }
@@ -401,9 +428,24 @@ public class MainActivity extends AppCompatActivity {
     private void openControlChannel() {
         this.log("Ready to open the control channel");
         try {
-            this.controlRequestChannel.open();
+            this.requestChannel.open();
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void sendChunk() {
+        if (this.bluetoothGatt != null && this.txCharacteristic != null && this.bytesLeft > 0) {
+            this.txCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+
+            int bytesToSend = bytesLeft > this.MAX_PACKET_SIZE ? this.MAX_PACKET_SIZE : bytesLeft;
+            byte[] chunk = new byte[bytesToSend];
+            System.arraycopy(this.outgoingData, this.outgoingData.length - bytesLeft, chunk, 0, bytesToSend);
+
+            this.txCharacteristic.setValue(chunk);
+            this.bluetoothGatt.writeCharacteristic(this.txCharacteristic);
+            bytesLeft -= bytesToSend;
         }
     }
 
