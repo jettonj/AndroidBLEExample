@@ -19,6 +19,7 @@ import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
@@ -30,6 +31,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.ParcelUuid;
+import android.util.SparseArray;
 import android.view.View;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -60,8 +62,13 @@ public class MainActivity extends AppCompatActivity {
     private final UUID txCharUUID = UUID.fromString("6e400022-b5a3-f393-e0a9-e50e24dcca9e");
     private final UUID rxCharUUID = UUID.fromString("6e400023-b5a3-f393-e0a9-e50e24dcca9e");
     private final UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID cccdDescriptorUUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private static final int MAX_PACKET_SIZE = 244;
+    // The entire list of control requests can be found here:
+    // https://github.com/particle-iot/device-os/blob/develop/system/inc/system_control.h#L41
+    private static final int ECHO_REQUEST_TYPE = 1;
+    private static final int SCAN_NETWORKS_TYPE = 506;
 
     private BluetoothManager bluetoothManager;
     private BluetoothAdapter bluetoothAdapter;
@@ -78,8 +85,11 @@ public class MainActivity extends AppCompatActivity {
     private BleRequestChannel requestChannel;
     private BleRequestChannelCallback requestChannelCallback;
 
-    private int bytesLeft;
-    private byte[] outgoingData;
+    private int bytesLeft = 0;
+    private byte[] outgoingData = new byte[0];
+    private boolean sending = false;
+    private int echoRequestId;
+    private int scanWifiRequestId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -105,14 +115,42 @@ public class MainActivity extends AppCompatActivity {
             @RequiresApi(api = 33)
             @SuppressLint("MissingPermission")
             public void onChannelWrite(byte[] data) {
-                self.outgoingData = data;
-                self.bytesLeft = data.length;
-                self.sendChunk();
+                byte[] buf = new byte[self.bytesLeft + data.length];
+                System.arraycopy(self.outgoingData, self.outgoingData.length - self.bytesLeft, buf, 0, self.bytesLeft);
+                System.arraycopy(data, 0, buf, self.bytesLeft, data.length);
+                self.outgoingData = buf;
+                self.bytesLeft += data.length;
+                if (!self.sending) {
+                    self.sending = true;
+                    self.sendChunk();
+                }
             }
 
             @Override
             public void onRequestResponse(int requestId, int result, byte[] data) {
-                self.log("onRequestResponse requestId: " + requestId + " result: " + result);
+                if (requestId == self.echoRequestId) {
+                    self.log("Got echo response: " + new String(data));
+
+                    self.log("Scanning for WiFi networks...");
+                    self.scanWifiRequestId = self.requestChannel.sendRequest(self.SCAN_NETWORKS_TYPE);
+                }
+
+                if (requestId == self.scanWifiRequestId) {
+                    WifiNew.ScanNetworksReply reply = null;
+                    try {
+                        reply = WifiNew.ScanNetworksReply.parseFrom(data);
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+
+                    self.log("Found " + reply.getNetworksCount() + " networks");
+                    for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
+                        String ssid = network.getSsid().toString();
+                        if (ssid != "") {
+                            self.log("  " + ssid + " (" + network.getRssi() + "dB)");
+                        }
+                    }
+                }
             }
 
             @Override
@@ -170,16 +208,29 @@ public class MainActivity extends AppCompatActivity {
             public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic) {
                 super.onCharacteristicChanged(gatt, characteristic);
 
-                self.requestChannel.read(characteristic.getValue());
+                runOnUiThread(() -> self.requestChannel.read(characteristic.getValue()));
             }
 
             @Override
             public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
                 super.onCharacteristicWrite(gatt, characteristic, status);
-//                self.log("Wrote to characteristic status: " + status);
+
                 if (self.bytesLeft > 0) {
-                    self.sendChunk();
+                    runOnUiThread(() -> self.sendChunk());
+                } else {
+                    self.sending = false;
                 }
+            }
+
+            @Override
+            public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+                super.onDescriptorWrite(gatt, descriptor, status);
+
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    self.log("Failed to update CCCD descriptor");
+                    return;
+                }
+                runOnUiThread(() -> self.openControlChannel());
             }
         };
     }
@@ -281,7 +332,12 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            this.openControlChannel();
+            BluetoothGattDescriptor descriptor = this.rxCharacteristic.getDescriptor(this.cccdDescriptorUUID);
+            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            if (!gatt.writeDescriptor(descriptor)) {
+                this.log("Failed to update CCCD descriptor");
+                return;
+            }
         } else if (status == BluetoothGatt.GATT_READ_NOT_PERMITTED) {
             this.log("Read not permitted for " + characteristic.getUuid());
         } else {
@@ -290,8 +346,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void onRequestChannelOpen() {
-        this.log("Request channel opened! Scanning for WiFi networks...");
-        this.scanWifiNetworks();
+        this.log("Request channel opened");
+        this.sendEchoRequest();
     }
 
     public boolean ensureCharacteristics(BluetoothGattService service) {
@@ -400,8 +456,13 @@ public class MainActivity extends AppCompatActivity {
     private void addDevice(ScanResult result) {
         BluetoothDevice device = result.getDevice();
 
-        byte[] manufacturerDataBytes = result.getScanRecord().getManufacturerSpecificData(1634);
-        String manufacturerData = new String(manufacturerDataBytes, StandardCharsets.UTF_8);
+        SparseArray<byte[]> manufacturerDataArray = result.getScanRecord().getManufacturerSpecificData();
+        String manufacturerData = "";
+        for(int i = 0, size = manufacturerDataArray.size(); i < size; i++) {
+            byte[] manufacturerDataBytes = manufacturerDataArray.valueAt(i);
+            // Concat all data
+            manufacturerData += new String(manufacturerDataBytes, StandardCharsets.UTF_8);
+        }
         String deviceName = result.getScanRecord().getDeviceName();
         if (!deviceName.endsWith(this.setupCode) && !manufacturerData.endsWith(this.setupCode)) {
             this.log("Found " + deviceName + " but it's not matching the setup code");
@@ -449,20 +510,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void scanWifiNetworks() {
-        WifiNew.ScanNetworksRequest request = WifiNew.ScanNetworksRequest.newBuilder().build();
-        // TODO: Send the request to the device and store the reply
-        byte[] replyData = new byte[0];
-        WifiNew.ScanNetworksReply reply = null;
-        try {
-            reply = WifiNew.ScanNetworksReply.parseFrom(replyData);
-        } catch (InvalidProtocolBufferException e) {
-            e.printStackTrace();
-        }
-
-        this.log("Found " + reply.getNetworksCount() + " networks");
-        for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
-            this.log("  " + network.getSsid() + " [" + network.getBssid() + "] " + network.getRssi() + "dB");
-        }
+    private void sendEchoRequest() {
+        this.log("Sending echo with: HELLO");
+        this.echoRequestId = this.requestChannel.sendRequest(this.ECHO_REQUEST_TYPE, "HELLO".getBytes());
     }
 }
