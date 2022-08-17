@@ -4,7 +4,7 @@
 // in permanent provisioning mode
 
 SYSTEM_MODE(SEMI_AUTOMATIC);
-Serial1LogHandler logHandler(115200, LOG_LEVEL_ALL);
+SerialLogHandler logHandler(115200, LOG_LEVEL_ALL);
 STARTUP(System.enableFeature(FEATURE_DISABLE_LISTENING_MODE));
 
 const char* serviceUuid = "6E400021-B5A3-F393-E0A9-E50E24DCCA9E";
