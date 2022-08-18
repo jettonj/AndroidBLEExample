@@ -124,6 +124,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
+            @SuppressLint("MissingPermission")
             @Override
             public void onRequestResponse(int requestId, int result, byte[] data) {
                 if (requestId == self.echoRequestId) {
@@ -148,6 +149,11 @@ public class MainActivity extends AppCompatActivity {
                             self.log("  " + ssid + " (" + network.getRssi() + "dB)");
                         }
                     }
+
+                    self.log("\nFinished. Disconnecting from the device");
+                    self.requestChannel.close();
+                    self.bluetoothGatt.disconnect();
+                    self.bluetoothGatt.close();
                 }
             }
 
