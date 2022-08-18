@@ -39,10 +39,8 @@ import android.widget.TextView;
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Random;
 import java.util.UUID;
 
 import io.particle.device.control.BleRequestChannel;
@@ -159,13 +157,8 @@ public class MainActivity extends AppCompatActivity {
             }
         };
         try {
-            Random rand = new Random();
-            SecureRandom secRand = new SecureRandom();
-            int pwdLen = rand.nextInt(100) + 1;
-            byte[] pwd = new byte[pwdLen];
-            secRand.nextBytes(pwd);
             this.requestChannel = new BleRequestChannel(mobileSecret.getBytes(), requestChannelCallback,
-                    BleRequestChannel.DEFAULT_MAX_CONCURRENT_REQUESTS, secRand);
+                    BleRequestChannel.DEFAULT_MAX_CONCURRENT_REQUESTS);
         } catch (Exception e) {
             e.printStackTrace();
         }
