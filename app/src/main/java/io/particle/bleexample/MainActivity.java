@@ -112,8 +112,6 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            @RequiresApi(api = 33)
-            @SuppressLint("MissingPermission")
             public void onChannelWrite(byte[] data) {
                 byte[] buf = new byte[self.bytesLeft + data.length];
                 System.arraycopy(self.outgoingData, self.outgoingData.length - self.bytesLeft, buf, 0, self.bytesLeft);
@@ -257,7 +255,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.S)
+    @RequiresApi(api = Build.VERSION_CODES.R)
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
@@ -373,7 +371,7 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.S)
+    @RequiresApi(api = Build.VERSION_CODES.R)
     public void onClick(View view) {
         this.log("\nLooking for " + this.setupCode + "...");
 
@@ -384,23 +382,31 @@ public class MainActivity extends AppCompatActivity {
         return ContextCompat.checkSelfPermission(this, permissionType) == PackageManager.PERMISSION_GRANTED;
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.S)
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private boolean ensurePermissions() {
-        boolean isPermissionGranted =
-                this.hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) &&
-                this.hasPermission(Manifest.permission.BLUETOOTH_SCAN) &&
-                this.hasPermission(Manifest.permission.BLUETOOTH_CONNECT);
+        boolean isPermissionGranted = this.hasPermission(Manifest.permission.ACCESS_FINE_LOCATION);
+        // Check for API 31 permissions
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            isPermissionGranted &= this.hasPermission(Manifest.permission.BLUETOOTH_SCAN) &&
+                    this.hasPermission(Manifest.permission.BLUETOOTH_CONNECT);
+        }
 
         if (isPermissionGranted) {
             return true;
         } else {
-            ActivityCompat.requestPermissions(
-                    this,
+            String[] permissions = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S ?
                     new String[]{
                             Manifest.permission.ACCESS_FINE_LOCATION,
                             Manifest.permission.BLUETOOTH_SCAN,
                             Manifest.permission.BLUETOOTH_CONNECT
-                    },
+                    }
+                    :
+                    new String[]{
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                    };
+            ActivityCompat.requestPermissions(
+                    this,
+                    permissions,
                     2
             );
             return false;
@@ -416,7 +422,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @SuppressLint("MissingPermission")
-    @RequiresApi(api = Build.VERSION_CODES.S)
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void startBleScan() {
         if (!this.ensurePermissions()) {
             return;
