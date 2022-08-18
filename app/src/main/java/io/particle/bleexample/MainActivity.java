@@ -19,6 +19,7 @@ import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
@@ -30,6 +31,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.ParcelUuid;
+import android.util.SparseArray;
 import android.view.View;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -41,24 +43,37 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.UUID;
 
+import io.particle.device.control.BleRequestChannel;
+import io.particle.device.control.BleRequestChannelCallback;
+import io.particle.device.control.RequestError;
 import io.particle.firmwareprotos.ctrl.wifi.WifiNew;
 
 public class MainActivity extends AppCompatActivity {
     private String logs;
 
     // Device setup code. By default, 6 characters of the serial number
-    private String setupCode = "HMCS78";
+    private final String setupCode = "HMCS78";
     // Mobile secret available on the QR sticker on the device
-    private String mobileSecret = "U6RWB9YCSHKV5V9";
+    private final String mobileSecret = "U6RWB9YCSHKV5V9";
     // UUIDs defined in the firmware
-    private UUID serviceUUID = UUID.fromString("6e400021-b5a3-f393-e0a9-e50e24dcca9e");
-    private UUID txCharUUID = UUID.fromString("6e400022-b5a3-f393-e0a9-e50e24dcca9e");
-    private UUID rxCharUUID = UUID.fromString("6e400023-b5a3-f393-e0a9-e50e24dcca9e");
-    private UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID serviceUUID = UUID.fromString("6e400021-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID txCharUUID = UUID.fromString("6e400022-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID rxCharUUID = UUID.fromString("6e400023-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID cccdDescriptorUUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+
+    // Ideally this value should be determined with requestMtu():
+    // https://developer.android.com/reference/android/bluetooth/BluetoothGatt#requestMtu(int)
+    private static final int MAX_PACKET_SIZE = 244;
+    // The entire list of control requests can be found here:
+    // https://github.com/particle-iot/device-os/blob/develop/system/inc/system_control.h#L41
+    private static final int ECHO_REQUEST_TYPE = 1;
+    private static final int SCAN_NETWORKS_TYPE = 506;
 
     private BluetoothManager bluetoothManager;
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothLeScanner;
+    private BluetoothGatt bluetoothGatt;
     private ScanCallback scanCallback;
     private ArrayList<BluetoothDevice> foundDevices;
     private BluetoothGattCallback bluetoothGattCallback;
@@ -66,6 +81,15 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothGattCharacteristic txCharacteristic;
     private BluetoothGattCharacteristic rxCharacteristic;
     private BluetoothGattCharacteristic versionCharacteristic;
+
+    private BleRequestChannel requestChannel;
+    private BleRequestChannelCallback requestChannelCallback;
+
+    private int bytesLeft = 0;
+    private byte[] outgoingData = new byte[0];
+    private boolean sending = false;
+    private int echoRequestId;
+    private int scanWifiRequestId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,7 +105,72 @@ public class MainActivity extends AppCompatActivity {
         this.log("Press Connect to start");
         MainActivity self = this;
 
+        this.requestChannelCallback = new BleRequestChannelCallback() {
+            @Override
+            public void onChannelOpen() {
+                self.onRequestChannelOpen();
+            }
+
+            @Override
+            public void onChannelWrite(byte[] data) {
+                byte[] buf = new byte[self.bytesLeft + data.length];
+                System.arraycopy(self.outgoingData, self.outgoingData.length - self.bytesLeft, buf, 0, self.bytesLeft);
+                System.arraycopy(data, 0, buf, self.bytesLeft, data.length);
+                self.outgoingData = buf;
+                self.bytesLeft += data.length;
+                if (!self.sending) {
+                    self.sending = true;
+                    self.sendChunk();
+                }
+            }
+
+            @SuppressLint("MissingPermission")
+            @Override
+            public void onRequestResponse(int requestId, int result, byte[] data) {
+                if (requestId == self.echoRequestId) {
+                    self.log("Got echo response: " + new String(data));
+
+                    self.log("Scanning for WiFi networks...");
+                    self.scanWifiRequestId = self.requestChannel.sendRequest(self.SCAN_NETWORKS_TYPE);
+                }
+
+                if (requestId == self.scanWifiRequestId) {
+                    WifiNew.ScanNetworksReply reply = null;
+                    try {
+                        reply = WifiNew.ScanNetworksReply.parseFrom(data);
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+
+                    self.log("Found " + reply.getNetworksCount() + " networks");
+                    for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
+                        String ssid = network.getSsid().toString();
+                        if (ssid != "") {
+                            self.log("  " + ssid + " (" + network.getRssi() + "dB)");
+                        }
+                    }
+
+                    self.log("\nFinished. Disconnecting from the device");
+                    self.requestChannel.close();
+                    self.bluetoothGatt.disconnect();
+                    self.bluetoothGatt.close();
+                }
+            }
+
+            @Override
+            public void onRequestError(int requestId, RequestError error) {
+                self.log("onRequestError requestId: " + requestId);
+            }
+        };
+        try {
+            this.requestChannel = new BleRequestChannel(mobileSecret.getBytes(), requestChannelCallback,
+                    BleRequestChannel.DEFAULT_MAX_CONCURRENT_REQUESTS);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
         scanCallback = new ScanCallback() {
+            @RequiresApi(api = Build.VERSION_CODES.R)
             @Override
             public void onScanResult(int callbackType, ScanResult result) {
                 super.onScanResult(callbackType, result);
@@ -103,6 +192,7 @@ public class MainActivity extends AppCompatActivity {
             public void onServicesDiscovered(BluetoothGatt gatt, int status) {
                 super.onServicesDiscovered(gatt, status);
 
+                self.bluetoothGatt = gatt;
                 runOnUiThread(() -> self.onServicesDiscovered(gatt, status));
             }
 
@@ -117,7 +207,29 @@ public class MainActivity extends AppCompatActivity {
             public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic) {
                 super.onCharacteristicChanged(gatt, characteristic);
 
-                // TODO: Send to the request channel
+                runOnUiThread(() -> self.requestChannel.read(characteristic.getValue()));
+            }
+
+            @Override
+            public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+                super.onCharacteristicWrite(gatt, characteristic, status);
+
+                if (self.bytesLeft > 0) {
+                    runOnUiThread(() -> self.sendChunk());
+                } else {
+                    self.sending = false;
+                }
+            }
+
+            @Override
+            public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+                super.onDescriptorWrite(gatt, descriptor, status);
+
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    self.log("Failed to update CCCD descriptor");
+                    return;
+                }
+                runOnUiThread(() -> self.openControlChannel());
             }
         };
     }
@@ -149,7 +261,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.N)
+    @RequiresApi(api = Build.VERSION_CODES.R)
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
@@ -219,12 +331,22 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            this.openControlChannel();
+            BluetoothGattDescriptor descriptor = this.rxCharacteristic.getDescriptor(this.cccdDescriptorUUID);
+            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            if (!gatt.writeDescriptor(descriptor)) {
+                this.log("Failed to update CCCD descriptor");
+                return;
+            }
         } else if (status == BluetoothGatt.GATT_READ_NOT_PERMITTED) {
             this.log("Read not permitted for " + characteristic.getUuid());
         } else {
             this.log("Characteristic read failed for " + characteristic.getUuid() + ": " + status);
         }
+    }
+
+    public void onRequestChannelOpen() {
+        this.log("Request channel opened");
+        this.sendEchoRequest();
     }
 
     public boolean ensureCharacteristics(BluetoothGattService service) {
@@ -255,7 +377,7 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.M)
+    @RequiresApi(api = Build.VERSION_CODES.R)
     public void onClick(View view) {
         this.log("\nLooking for " + this.setupCode + "...");
 
@@ -266,22 +388,31 @@ public class MainActivity extends AppCompatActivity {
         return ContextCompat.checkSelfPermission(this, permissionType) == PackageManager.PERMISSION_GRANTED;
     }
 
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private boolean ensurePermissions() {
-        boolean isPermissionGranted =
-                this.hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) &&
-                this.hasPermission(Manifest.permission.BLUETOOTH_SCAN) &&
-                this.hasPermission(Manifest.permission.BLUETOOTH_CONNECT);
+        boolean isPermissionGranted = this.hasPermission(Manifest.permission.ACCESS_FINE_LOCATION);
+        // Check for API 31 permissions
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            isPermissionGranted &= this.hasPermission(Manifest.permission.BLUETOOTH_SCAN) &&
+                    this.hasPermission(Manifest.permission.BLUETOOTH_CONNECT);
+        }
 
         if (isPermissionGranted) {
             return true;
         } else {
-            ActivityCompat.requestPermissions(
-                    this,
+            String[] permissions = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S ?
                     new String[]{
                             Manifest.permission.ACCESS_FINE_LOCATION,
                             Manifest.permission.BLUETOOTH_SCAN,
                             Manifest.permission.BLUETOOTH_CONNECT
-                    },
+                    }
+                    :
+                    new String[]{
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                    };
+            ActivityCompat.requestPermissions(
+                    this,
+                    permissions,
                     2
             );
             return false;
@@ -290,14 +421,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void log(String line) {
         this.logs += line + "\n";
-        TextView textView = (TextView) findViewById(R.id.textView);
+        TextView textView = findViewById(R.id.textView);
         textView.setText(this.logs);
-        ScrollView scrollView = (ScrollView) findViewById(R.id.scrollView);
+        ScrollView scrollView = findViewById(R.id.scrollView);
         scrollView.fullScroll(View.FOCUS_DOWN);
     }
 
     @SuppressLint("MissingPermission")
-    @RequiresApi(api = Build.VERSION_CODES.M)
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void startBleScan() {
         if (!this.ensurePermissions()) {
             return;
@@ -321,7 +452,7 @@ public class MainActivity extends AppCompatActivity {
                 .build();
 
         this.bluetoothLeScanner.startScan(
-                Arrays.asList(new ScanFilter[]{filter}),
+                Arrays.asList(filter),
                 scanSettings,
                 scanCallback
         );
@@ -332,8 +463,13 @@ public class MainActivity extends AppCompatActivity {
     private void addDevice(ScanResult result) {
         BluetoothDevice device = result.getDevice();
 
-        byte[] manufacturerDataBytes = result.getScanRecord().getManufacturerSpecificData(1634);
-        String manufacturerData = new String(manufacturerDataBytes, StandardCharsets.UTF_8);
+        SparseArray<byte[]> manufacturerDataArray = result.getScanRecord().getManufacturerSpecificData();
+        String manufacturerData = "";
+        for(int i = 0, size = manufacturerDataArray.size(); i < size; i++) {
+            byte[] manufacturerDataBytes = manufacturerDataArray.valueAt(i);
+            // Concat all data
+            manufacturerData += new String(manufacturerDataBytes, StandardCharsets.UTF_8);
+        }
         String deviceName = result.getScanRecord().getDeviceName();
         if (!deviceName.endsWith(this.setupCode) && !manufacturerData.endsWith(this.setupCode)) {
             this.log("Found " + deviceName + " but it's not matching the setup code");
@@ -359,19 +495,30 @@ public class MainActivity extends AppCompatActivity {
 
     private void openControlChannel() {
         this.log("Ready to open the control channel");
-        // TODO: Implement once the control channel is done
-        // TODO: Scan the WiFi networks once the control channel is open
+        try {
+            this.requestChannel.open();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
-    private void scanWifiNetworks() throws InvalidProtocolBufferException {
-        WifiNew.ScanNetworksRequest request = WifiNew.ScanNetworksRequest.newBuilder().build();
-        // TODO: Send the request to the device and store the reply
-        byte[] replyData = new byte[0];
-        WifiNew.ScanNetworksReply reply = WifiNew.ScanNetworksReply.parseFrom(replyData);
+    @SuppressLint("MissingPermission")
+    private void sendChunk() {
+        if (this.bluetoothGatt != null && this.txCharacteristic != null && this.bytesLeft > 0) {
+            this.txCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
 
-        this.log("Found " + reply.getNetworksCount() + " networks");
-        for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
-            this.log("  " + network.getSsid() + " [" + network.getBssid() + "] " + network.getRssi() + "dB");
+            int bytesToSend = bytesLeft > this.MAX_PACKET_SIZE ? this.MAX_PACKET_SIZE : bytesLeft;
+            byte[] chunk = new byte[bytesToSend];
+            System.arraycopy(this.outgoingData, this.outgoingData.length - bytesLeft, chunk, 0, bytesToSend);
+
+            this.txCharacteristic.setValue(chunk);
+            this.bluetoothGatt.writeCharacteristic(this.txCharacteristic);
+            bytesLeft -= bytesToSend;
         }
+    }
+
+    private void sendEchoRequest() {
+        this.log("Sending echo with: HELLO");
+        this.echoRequestId = this.requestChannel.sendRequest(this.ECHO_REQUEST_TYPE, "HELLO".getBytes());
     }
 }
