@@ -3,10 +3,10 @@
 ## Getting started
 
 1. Clone this repo
-2. Flash the app from [`firmware`](firmware/) directory to an Argon or P2
+2. Flash the app from [`firmware`](firmware/) directory to an Argon or P2 against at least Device OS 3.3.0 (previous versions didn't include the provisioning mode)
 3. Scan the QR code from the device. It will contain two lines of text
-    * first line contains the serial number. Take the last six characters and update the [`setupCode`](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L50) constant
-    * second line contains the mobile secret. Take it and update the [`mobileSecret`](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L52) constant
+    * first line contains the serial number. Take the last six characters and update the [`setupCode`](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L57) constant
+    * second line contains the mobile secret. Take it and update the [`mobileSecret`](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L59) constant
 4. Make sure you have [Android Studio](https://developer.android.com/studio/install) installed and configured
 5. Make sure your Android device [is set up for development](https://developer.android.com/studio/run/device)
 6. Open this repo in Android Studio and run the app on the device
@@ -18,13 +18,13 @@
 The app goes through following steps:
 
 1. Sets up and ensures all necessary BLE permissions
-1. Looks for devices with `name` or `manufacturerData` ending with [hardcoded `setupCode`](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L50)
+1. Looks for devices with `name` or `manufacturerData` ending with [hardcoded `setupCode`](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L57)
 1. Connects to the first device found
-1. Looks for exposed [service with hardcoded UUID](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L54)
+1. Looks for exposed [service with hardcoded UUID](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L61)
 1. Lists its characteristics and ensures that it contains all the necessary ones
-    1. Checks if version characteristic has [matching UUID](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L57) *AND* is readable
-    1. Checks if read characteristic has [matching UUID](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L56) *AND* is notifying
-    1. Checks if write characteristic has [matching UUID](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L55) *AND* is writable
+    1. Checks if version characteristic has [matching UUID](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L64) *AND* is readable
+    1. Checks if read characteristic has [matching UUID](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L63) *AND* is notifying
+    1. Checks if write characteristic has [matching UUID](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L62) *AND* is writable
 1. Checks if the protocol version equals `2`
 1. Send echo request
 1. Send scan wifi networks request

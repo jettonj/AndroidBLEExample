@@ -62,6 +62,8 @@ public class MainActivity extends AppCompatActivity {
     private final UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
     private final UUID cccdDescriptorUUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
+    // Ideally this value should be determined with requestMtu():
+    // https://developer.android.com/reference/android/bluetooth/BluetoothGatt#requestMtu(int)
     private static final int MAX_PACKET_SIZE = 244;
     // The entire list of control requests can be found here:
     // https://github.com/particle-iot/device-os/blob/develop/system/inc/system_control.h#L41
