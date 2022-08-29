@@ -3,13 +3,15 @@
 ## Getting started
 
 1. Clone this repo
-2. Flash the app from [`firmware`](firmware/) directory to an Argon or P2 against at least Device OS 3.3.0 (previous versions didn't include the provisioning mode)
+2. Flash the app from [`firmware`](firmware/) directory to an Argon or P2 against at least Device OS 3.3.0 (previous versions didn't include the provisioning mode).
 3. Scan the QR code from the device. It will contain two lines of text
     * first line contains the serial number. Take the last six characters and update the [`setupCode`](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L57) constant
     * second line contains the mobile secret. Take it and update the [`mobileSecret`](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L59) constant
 4. Make sure you have [Android Studio](https://developer.android.com/studio/install) installed and configured
 5. Make sure your Android device [is set up for development](https://developer.android.com/studio/run/device). The app requires at least Android 10 (API version 30)
 6. Open this repo in Android Studio and run the app on the device
+
+**Note:** this app uses [custom BLE UUIDs](https://github.com/particle-iot/AndroidBLEExample/blob/main/app/src/main/java/io/particle/bleexample/MainActivity.java#L59) meaning it won't work with stock Listening Mode without flashing the firmware above. You can update this app to use the default UUIDs but it's recommended to use unique UUIDs for your products to avoid picking up Particle dev kits when setting up your devices.
 
 ## Development
 
