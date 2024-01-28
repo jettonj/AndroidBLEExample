@@ -46,6 +46,8 @@ public final class WifiNew {
      * <code>WPA_WPA2_PSK = 4;</code>
      */
     WPA_WPA2_PSK(4),
+    WPA3_PSK(5),
+    WPA_WPA3_PSK(6),
     UNRECOGNIZED(-1),
     ;
 
@@ -69,6 +71,8 @@ public final class WifiNew {
      * <code>WPA_WPA2_PSK = 4;</code>
      */
     public static final int WPA_WPA2_PSK_VALUE = 4;
+    public static final int WPA3_PSK_VALUE = 5;
+    public static final int WPA_WPA3_PSK_VALUE = 6;
 
 
     public final int getNumber() {
@@ -100,6 +104,8 @@ public final class WifiNew {
         case 2: return WPA_PSK;
         case 3: return WPA2_PSK;
         case 4: return WPA_WPA2_PSK;
+        case 5: return WPA3_PSK;
+        case 6: return WPA_WPA3_PSK;
         default: return null;
       }
     }

@@ -244,6 +244,7 @@ public class BleRequestChannel {
                 }
                 ByteBuffer packet = this.buf.slice();
                 packet.limit(packetLen);
+                System.out.println("read() isopen: packet: " + isOpen + " " + packet);
                 if (isOpen) {
                     this.readResponse(packet);
                 } else {

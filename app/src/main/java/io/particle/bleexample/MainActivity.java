@@ -1,10 +1,9 @@
 package io.particle.bleexample;
 
-import static android.bluetooth.BluetoothGattCharacteristic.FORMAT_UINT8;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -31,8 +30,11 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.ParcelUuid;
+import android.text.InputType;
 import android.util.SparseArray;
+import android.util.Log;
 import android.view.View;
+import android.widget.EditText;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -52,11 +54,11 @@ public class MainActivity extends AppCompatActivity {
     private String logs;
 
     // Device setup code. By default, 6 characters of the serial number
-    private final String setupCode = "HMCS78";
+    private final String setupCode = "Ori";
     // Mobile secret available on the QR sticker on the device
-    private final String mobileSecret = "U6RWB9YCSHKV5V9";
+    private final String mobileSecret = "BIGROBOTSSECRET";
     // UUIDs defined in the firmware
-    private final UUID serviceUUID = UUID.fromString("6e400021-b5a3-f393-e0a9-e50e24dcca9e");
+    private final UUID serviceUUID = UUID.fromString("6e400021-b5a3-f393-e0a9-cbedcbedcbed");
     private final UUID txCharUUID = UUID.fromString("6e400022-b5a3-f393-e0a9-e50e24dcca9e");
     private final UUID rxCharUUID = UUID.fromString("6e400023-b5a3-f393-e0a9-e50e24dcca9e");
     private final UUID versionCharUUID = UUID.fromString("6e400024-b5a3-f393-e0a9-e50e24dcca9e");
@@ -68,6 +70,7 @@ public class MainActivity extends AppCompatActivity {
     // The entire list of control requests can be found here:
     // https://github.com/particle-iot/device-os/blob/develop/system/inc/system_control.h#L41
     private static final int ECHO_REQUEST_TYPE = 1;
+    private static final int JOIN_NEW_NETWORK_TYPE = 500;
     private static final int SCAN_NETWORKS_TYPE = 506;
 
     private BluetoothManager bluetoothManager;
@@ -85,14 +88,102 @@ public class MainActivity extends AppCompatActivity {
     private BleRequestChannel requestChannel;
     private BleRequestChannelCallback requestChannelCallback;
 
+    private ArrayList<WifiNew.ScanNetworksReply.Network> wifiNetworksList = new ArrayList<>();
+
     private int bytesLeft = 0;
     private byte[] outgoingData = new byte[0];
     private boolean sending = false;
     private int echoRequestId;
     private int scanWifiRequestId;
+    private int wifiJoinNewNetworkRequestId;
+
+    private void showWifiNetworksDialog() {
+        runOnUiThread(() -> {
+            AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
+            builder.setTitle("Select a WiFi network");
+
+            ArrayList<String> listing = new ArrayList<String>();
+
+            for (WifiNew.ScanNetworksReply.Network network: wifiNetworksList)
+            {
+                listing.add(network.getSsid());
+            }
+
+            final CharSequence[] ssid_chararray = listing.toArray(new CharSequence[listing.size()]);
+
+            // Convert ArrayList to CharSequence array for use in AlertDialog
+            CharSequence[] wifiNetworksArray = listing.toArray(new CharSequence[listing.size()]);
+
+            builder.setItems(wifiNetworksArray, (dialog, which) -> {
+                WifiNew.ScanNetworksReply.Network selectedNetwork = wifiNetworksList.get(which);
+                // Prompt for the WiFi password
+                promptForWifiPassword(selectedNetwork);
+            });
+
+            AlertDialog dialog = builder.create();
+            dialog.show();
+        });
+    }
+
+    private void promptForWifiPassword(final WifiNew.ScanNetworksReply.Network selectedNetwork) {
+        // Create an EditText to input the password
+        final EditText passwordInput = new EditText(MainActivity.this);
+        passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        passwordInput.setHint("Password");
+
+        // Create a dialog to enter the password
+        new AlertDialog.Builder(MainActivity.this)
+                .setTitle("Enter Password for " + selectedNetwork.getSsid())
+                .setView(passwordInput)
+                .setPositiveButton("Connect", (dialog, whichButton) -> {
+                    String password = passwordInput.getText().toString();
+                    log("Connecting to " + selectedNetwork.getSsid() + " with password " + password);
+                    // Connect to the selected network with the provided password
+                    connectToNetwork(selectedNetwork, password);
+                })
+                .setNegativeButton("Cancel", (dialog, whichButton) -> dialog.dismiss())
+                .show();
+    }
+
+    // Connect to the selected WiFi network
+    private void connectToNetwork(WifiNew.ScanNetworksReply.Network netw, String password) {
+
+        WifiNew.Credentials creds;
+        WifiNew.JoinNewNetworkRequest newNetworkRequest;
+
+        if (password == "") {
+            creds = WifiNew.Credentials.newBuilder()
+                    .setType(WifiNew.CredentialsType.NO_CREDENTIALS)
+                    .build();
+
+            newNetworkRequest = WifiNew.JoinNewNetworkRequest.newBuilder()
+                    .setSsid(netw.getSsid())
+                    .setSecurity(WifiNew.Security.NO_SECURITY)
+                    .setCredentials(creds)
+                    .build();
+        } else {
+            creds = WifiNew.Credentials.newBuilder()
+                    .setType(WifiNew.CredentialsType.PASSWORD)
+                    .setPassword(password)
+                    .build();
+
+            newNetworkRequest = WifiNew.JoinNewNetworkRequest.newBuilder()
+                    .setSsid(netw.getSsid())
+                    .setSecurity(netw.getSecurity())
+                    .setCredentials(creds)
+                    .build();
+        }
+
+        this.log("Sending network and password to P2...");
+        this.wifiJoinNewNetworkRequestId = this.requestChannel.sendRequest(JOIN_NEW_NETWORK_TYPE, newNetworkRequest.toByteArray());
+        this.log("JOIN_NEW_NETWORK_TYPE request is " + this.wifiJoinNewNetworkRequestId);
+        //???
+    }
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+
         bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         bluetoothAdapter = bluetoothManager.getAdapter();
         bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
@@ -104,6 +195,7 @@ public class MainActivity extends AppCompatActivity {
         this.logs = "";
         this.log("Press Connect to start");
         MainActivity self = this;
+
 
         this.requestChannelCallback = new BleRequestChannelCallback() {
             @Override
@@ -127,11 +219,14 @@ public class MainActivity extends AppCompatActivity {
             @SuppressLint("MissingPermission")
             @Override
             public void onRequestResponse(int requestId, int result, byte[] data) {
+                self.log("onRequestResponse(requestId:" + requestId + ", result: " + result);
+
                 if (requestId == self.echoRequestId) {
                     self.log("Got echo response: " + new String(data));
 
                     self.log("Scanning for WiFi networks...");
-                    self.scanWifiRequestId = self.requestChannel.sendRequest(self.SCAN_NETWORKS_TYPE);
+                    self.scanWifiRequestId = self.requestChannel.sendRequest(SCAN_NETWORKS_TYPE);
+                    self.log("SCAN_NETWORKS_TYPE request is " + self.scanWifiRequestId);
                 }
 
                 if (requestId == self.scanWifiRequestId) {
@@ -142,18 +237,41 @@ public class MainActivity extends AppCompatActivity {
                         e.printStackTrace();
                     }
 
-                    self.log("Found " + reply.getNetworksCount() + " networks");
+                    self.wifiNetworksList.clear(); // Clear previous scan results
+                    if (reply != null) {
+                        self.log("Found " + reply.getNetworksCount() + " networks");
+                    } else {
+                        self.log("ScanNetworksReply error");
+                        //todo leave?
+                    }
+
                     for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
-                        String ssid = network.getSsid().toString();
+                        String ssid = network.getSsid();
                         if (ssid != "") {
                             self.log("  " + ssid + " (" + network.getRssi() + "dB)");
+                            //self.log(network.toString());
+                            self.wifiNetworksList.add(network); // Add to list for displaying in dialog
                         }
                     }
 
+                    self.showWifiNetworksDialog(); // Call method to show dialog with WiFi networks
+                }
+
+                if (requestId == self.wifiJoinNewNetworkRequestId) {
+                    WifiNew.JoinNewNetworkReply reply = null;
+                    try {
+                        reply = WifiNew.JoinNewNetworkReply.parseFrom(data);
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+
+                    self.log("Data: " + data);
+                    self.log("Reply: " + reply.toString());
                     self.log("\nFinished. Disconnecting from the device");
                     self.requestChannel.close();
                     self.bluetoothGatt.disconnect();
                     self.bluetoothGatt.close();
+
                 }
             }
 
@@ -314,12 +432,13 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         });
+
     }
 
     @SuppressLint("MissingPermission")
     public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, int status) {
         if (status == BluetoothGatt.GATT_SUCCESS) {
-            Integer version = characteristic.getIntValue(FORMAT_UINT8, 0);
+            Integer version = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 0);
 
             if (version != 2) {
                 this.log("Protocol version " + version + " is not supported");
@@ -381,6 +500,9 @@ public class MainActivity extends AppCompatActivity {
     public void onClick(View view) {
         this.log("\nLooking for " + this.setupCode + "...");
 
+        //doesnt work when i separate it?
+        //this.initBluetooth();
+
         this.startBleScan();
     }
 
@@ -427,6 +549,186 @@ public class MainActivity extends AppCompatActivity {
         scrollView.fullScroll(View.FOCUS_DOWN);
     }
 
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void setupCallbacksAndListeners() {
+
+        runOnUiThread(() -> {
+            try {
+                // Your code here
+                Log.d("MainActivity", "Running on UI thread");
+            } catch (Exception e) {
+                Log.e("MainActivity", "Error in runOnUiThread", e);
+            }
+        });
+
+        requestChannelCallback = new BleRequestChannelCallback() {
+            @Override
+            public void onChannelOpen() {
+                onRequestChannelOpen();
+            }
+
+            @Override
+            public void onChannelWrite(byte[] data) {
+                byte[] buf = new byte[bytesLeft + data.length];
+                System.arraycopy(outgoingData, outgoingData.length - bytesLeft, buf, 0, bytesLeft);
+                System.arraycopy(data, 0, buf, bytesLeft, data.length);
+                outgoingData = buf;
+                bytesLeft += data.length;
+                if (!sending) {
+                    sending = true;
+                    sendChunk();
+                }
+            }
+
+            @SuppressLint("MissingPermission")
+            @Override
+            public void onRequestResponse(int requestId, int result, byte[] data) {
+                log("onRequestResponse(requestId:" + requestId + ", result: " + result);
+
+                if (requestId == echoRequestId) {
+                    log("Got echo response: " + new String(data));
+
+                    log("Scanning for WiFi networks...");
+                    scanWifiRequestId = requestChannel.sendRequest(SCAN_NETWORKS_TYPE);
+                    log("SCAN_NETWORKS_TYPE request is " + scanWifiRequestId);
+                }
+
+                if (requestId == scanWifiRequestId) {
+                    WifiNew.ScanNetworksReply reply = null;
+                    try {
+                        reply = WifiNew.ScanNetworksReply.parseFrom(data);
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+
+                    wifiNetworksList.clear(); // Clear previous scan results
+                    if (reply != null) {
+                        log("Found " + reply.getNetworksCount() + " networks");
+                    } else {
+                        log("ScanNetworksReply error");
+                        //todo leave?
+                    }
+
+                    for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
+                        String ssid = network.getSsid();
+                        if (ssid != "") {
+                            log("  " + ssid + " (" + network.getRssi() + "dB)");
+                            //self.log(network.toString());
+                            wifiNetworksList.add(network); // Add to list for displaying in dialog
+                        }
+                    }
+
+                    showWifiNetworksDialog(); // Call method to show dialog with WiFi networks
+                }
+
+                if (requestId == wifiJoinNewNetworkRequestId) {
+                    WifiNew.JoinNewNetworkReply reply = null;
+                    try {
+                        reply = WifiNew.JoinNewNetworkReply.parseFrom(data);
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+
+                    log("Data: " + data);
+                    log("Reply: " + reply.toString());
+                    log("\nFinished. Disconnecting from the device");
+                    requestChannel.close();
+                    bluetoothGatt.disconnect();
+                    bluetoothGatt.close();
+
+                }
+            }
+
+            @Override
+            public void onRequestError(int requestId, RequestError error) {
+                log("onRequestError requestId: " + requestId);
+            }
+        };
+        try {
+            requestChannel = new BleRequestChannel(mobileSecret.getBytes(), requestChannelCallback,
+                    BleRequestChannel.DEFAULT_MAX_CONCURRENT_REQUESTS);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        scanCallback = new ScanCallback() {
+            @RequiresApi(api = Build.VERSION_CODES.R)
+            @Override
+            public void onScanResult(int callbackType, ScanResult result) {
+                super.onScanResult(callbackType, result);
+
+                addDevice(result);
+            }
+        };
+
+        bluetoothGattCallback = new BluetoothGattCallback() {
+            @Override
+            public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+                super.onConnectionStateChange(gatt, status, newState);
+
+                runOnUiThread(() -> onConnectionStateChange(gatt, status, newState));
+            }
+
+            @Override
+            public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+                super.onServicesDiscovered(gatt, status);
+
+                bluetoothGatt = gatt;
+                runOnUiThread(() -> onServicesDiscovered(gatt, status));
+            }
+
+            @Override
+            public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, int status) {
+                super.onCharacteristicRead(gatt, characteristic, status);
+
+                runOnUiThread(() -> onCharacteristicRead(gatt, characteristic, status));
+            }
+
+            @Override
+            public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic) {
+                super.onCharacteristicChanged(gatt, characteristic);
+
+                runOnUiThread(() -> requestChannel.read(characteristic.getValue()));
+            }
+
+            @Override
+            public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+                super.onCharacteristicWrite(gatt, characteristic, status);
+
+                if (bytesLeft > 0) {
+                    runOnUiThread(() -> sendChunk());
+                } else {
+                    sending = false;
+                }
+            }
+
+            @Override
+            public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+                super.onDescriptorWrite(gatt, descriptor, status);
+
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    log("Failed to update CCCD descriptor");
+                    return;
+                }
+                runOnUiThread(() -> openControlChannel());
+            }
+        };
+
+    }
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void initBluetooth() {
+
+        bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+        bluetoothAdapter = bluetoothManager.getAdapter();
+        bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
+        foundDevices = new ArrayList<BluetoothDevice>();
+
+        // Setup the callbacks and other initialization logic here
+        setupCallbacksAndListeners();
+
+    }
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void startBleScan() {
@@ -507,7 +809,7 @@ public class MainActivity extends AppCompatActivity {
         if (this.bluetoothGatt != null && this.txCharacteristic != null && this.bytesLeft > 0) {
             this.txCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
 
-            int bytesToSend = bytesLeft > this.MAX_PACKET_SIZE ? this.MAX_PACKET_SIZE : bytesLeft;
+            int bytesToSend = Math.min(bytesLeft, MAX_PACKET_SIZE);
             byte[] chunk = new byte[bytesToSend];
             System.arraycopy(this.outgoingData, this.outgoingData.length - bytesLeft, chunk, 0, bytesToSend);
 
@@ -519,6 +821,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void sendEchoRequest() {
         this.log("Sending echo with: HELLO");
-        this.echoRequestId = this.requestChannel.sendRequest(this.ECHO_REQUEST_TYPE, "HELLO".getBytes());
+        this.echoRequestId = this.requestChannel.sendRequest(ECHO_REQUEST_TYPE, "HELLO".getBytes());
+        this.log("ECHO_REQUEST_TYPE request is " + this.echoRequestId);
     }
 }
