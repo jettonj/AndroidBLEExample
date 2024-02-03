@@ -10,6 +10,8 @@ import org.bouncycastle.crypto.InvalidCipherTextException;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.NoSuchAlgorithmException;
@@ -215,6 +217,17 @@ public class BleRequestChannel {
         this.closeWithError(new RequestError("Channel closed"));
     }
 
+    private static final byte[] HEX_ARRAY = "0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
+    public static String bytesToHex(byte[] bytes) {
+        byte[] hexChars = new byte[bytes.length * 2];
+        for (int j = 0; j < bytes.length; j++) {
+            int v = bytes[j] & 0xFF;
+            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
+            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
+        }
+        return new String(hexChars, StandardCharsets.UTF_8);
+    }
+
     /**
      * Read data received from the device.
      *
@@ -225,13 +238,17 @@ public class BleRequestChannel {
             throw new IllegalStateException("Invalid channel state");
         }
         try {
+            ByteBuffer buf2 = ByteBuffer.wrap(this.buf.array(),0,this.buf.remaining());
+            System.out.println("> " + bytesToHex(data));
             this.appendToInputBuf(data);
+            //System.out.println("read() dataLen: " + data.length + " bufRem: " + this.buf.remaining());
             if (this.reading) {
                 return;
             }
             this.reading = true;
             for (;;) {
                 if (this.buf.remaining() < 2) {
+                    //System.out.println("this.buf.remaining() < 2");
                     break;
                 }
                 this.buf.mark();
@@ -239,13 +256,17 @@ public class BleRequestChannel {
                 this.buf.reset();
                 boolean isOpen = (this.state == State.OPEN);
                 int packetLen = payloadLen + (isOpen ? RESPONSE_PACKET_OVERHEAD : HANDSHAKE_PACKET_OVERHEAD);
+
+                //System.out.println(bytesToHex(buf.array()));
+                System.out.println("this.buf.remaining() " + this.buf.remaining() + " packetLen: " + packetLen + " (" + payloadLen + "+" + (isOpen ? RESPONSE_PACKET_OVERHEAD : HANDSHAKE_PACKET_OVERHEAD) +")");
+
                 if (this.buf.remaining() < packetLen) {
                     break;
                 }
                 ByteBuffer packet = this.buf.slice();
                 packet.limit(packetLen);
-                System.out.println("read() isopen: packet: " + isOpen + " " + packet);
                 if (isOpen) {
+                    System.out.println("Sending to readResponse()");
                     this.readResponse(packet);
                 } else {
                     this.readHandshake(packet);

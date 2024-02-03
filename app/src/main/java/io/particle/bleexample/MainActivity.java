@@ -45,6 +45,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.UUID;
 
 import io.particle.device.control.BleRequestChannel;
@@ -73,14 +74,20 @@ public class MainActivity extends AppCompatActivity {
     // https://github.com/particle-iot/device-os/blob/develop/system/inc/system_control.h#L41
     private static final int ECHO_REQUEST_TYPE = 1;
     private static final int JOIN_NEW_NETWORK_TYPE = 500;
+    private static final int CLEAR_KNOWN_NETWORKS_TYPE = 504;
+    private static final int GET_CURRENT_NETWORK_TYPE = 505;
     private static final int SCAN_NETWORKS_TYPE = 506;
+
+
 
     private BluetoothManager bluetoothManager;
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothLeScanner;
     private BluetoothGatt bluetoothGatt;
     private ScanCallback scanCallback;
-    private ArrayList<BluetoothDevice> foundDevices;
+    private ArrayList<ScanResult> foundScanResults;
+    private ArrayList<BluetoothDevice> shadowBTDeviceList;
+    private BluetoothDevice lastConnectedDevice;
     private BluetoothGattCallback bluetoothGattCallback;
 
     private BluetoothGattCharacteristic txCharacteristic;
@@ -97,11 +104,13 @@ public class MainActivity extends AppCompatActivity {
     private boolean sending = false;
     private int echoRequestId;
     private int scanWifiRequestId;
+    private int clearKnownWifiRequestId;
     private int wifiJoinNewNetworkRequestId;
+    private int getCurrentNetworkId;
     private int lastRequestId;
     private boolean bleInitFlag = false;
     private boolean scanning = false;
-    private int currentScanDelay = 1000; //plan to increment this when a user requests to rescan ("I don't see my system, rescan")
+    private int currentScanDelay = 2000; //plan to increment this when a user requests to rescan ("I don't see my system, rescan")
     private Blereq blereq;
     class Blereq
     {
@@ -111,6 +120,9 @@ public class MainActivity extends AppCompatActivity {
         private boolean echoRequestIsComplete = false;
         private boolean scanWifiRequestIsComplete = false;
         private boolean wifiJoinNewNetworkRequestIsComplete = false;
+        private boolean wifiGetCurrentNetworkIsComplete = false;
+        private boolean wifiClearKnownWifiRequestIdIsComplete = false;
+        private boolean isNewInstance = true;
 
         public void setLastRequestInfo(int id, int idType, byte[] data) {
             this.lastRequestId = id;
@@ -127,8 +139,10 @@ public class MainActivity extends AppCompatActivity {
                 retVal = scanWifiRequestIsComplete;
             } else if (requestId == wifiJoinNewNetworkRequestId) {
                 retVal = wifiJoinNewNetworkRequestIsComplete;
-            } else {
-
+            } else if (requestId == getCurrentNetworkId) {
+                retVal = wifiGetCurrentNetworkIsComplete;
+            } else if (requestId == clearKnownWifiRequestId) {
+                retVal = wifiClearKnownWifiRequestIdIsComplete;
             }
             return retVal;
         }
@@ -139,11 +153,29 @@ public class MainActivity extends AppCompatActivity {
                 scanWifiRequestIsComplete = true;
             } else if (requestId == wifiJoinNewNetworkRequestId) {
                 wifiJoinNewNetworkRequestIsComplete = true;
-            } else {
-
+            } else if (requestId == getCurrentNetworkId) {
+                wifiGetCurrentNetworkIsComplete = true;
+            } else if (requestId == clearKnownWifiRequestId) {
+                wifiClearKnownWifiRequestIdIsComplete = true;
+            }
+        }
+        public void setLastResponseReceived() {
+            if (this.lastRequestId == echoRequestId) {
+                echoRequestIsComplete = true;
+            } else if (this.lastRequestId == scanWifiRequestId) {
+                scanWifiRequestIsComplete = true;
+            } else if (this.lastRequestId == wifiJoinNewNetworkRequestId) {
+                wifiJoinNewNetworkRequestIsComplete = true;
+            } else if (this.lastRequestId == getCurrentNetworkId) {
+                wifiGetCurrentNetworkIsComplete = true;
+            } else if (this.lastRequestId == clearKnownWifiRequestId) {
+                wifiClearKnownWifiRequestIdIsComplete = true;
             }
         }
     }
+
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void showWifiNetworksDialog() {
         runOnUiThread(() -> {
             AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
@@ -170,6 +202,8 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void promptForWifiPassword(final WifiNew.ScanNetworksReply.Network selectedNetwork) {
         // Create an EditText to input the password
         final EditText passwordInput = new EditText(MainActivity.this);
@@ -191,6 +225,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // Connect to the selected WiFi network
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void connectToNetwork(WifiNew.ScanNetworksReply.Network netw, String password) {
 
         WifiNew.Credentials creds;
@@ -219,11 +255,7 @@ public class MainActivity extends AppCompatActivity {
                     .build();
         }
 
-        this.log("Sending network and password to P2...");
-        this.wifiJoinNewNetworkRequestId = this.requestChannel.sendRequest(JOIN_NEW_NETWORK_TYPE, newNetworkRequest.toByteArray());
-        startRequestTimer(this.wifiJoinNewNetworkRequestId, JOIN_NEW_NETWORK_TYPE, newNetworkRequest.toByteArray());
-        blereq.setLastRequestInfo(this.wifiJoinNewNetworkRequestId,JOIN_NEW_NETWORK_TYPE, newNetworkRequest.toByteArray());
-        this.log("JOIN_NEW_NETWORK_TYPE request is " + this.wifiJoinNewNetworkRequestId);
+        createWifiJoinNewNetworkRequest(newNetworkRequest.toByteArray());
     }
 
 
@@ -360,6 +392,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
     public void onRequestChannelOpen() {
         this.log("Request channel opened");
         this.sendEchoRequest();
@@ -443,13 +477,18 @@ public class MainActivity extends AppCompatActivity {
         textView.setText(this.logs);
         ScrollView scrollView = findViewById(R.id.scrollView);
         scrollView.fullScroll(View.FOCUS_DOWN);
+        System.out.println(line);
     }
 
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void setupCallbacksAndListeners() {
 
-        blereq = new Blereq();
+        if (blereq != null) {
+            blereq.setLastResponseReceived();
+        } else {
+            blereq = new Blereq();
+        }
         requestChannelCallback = new BleRequestChannelCallback() {
             @Override
             public void onChannelOpen() {
@@ -472,19 +511,38 @@ public class MainActivity extends AppCompatActivity {
             @SuppressLint("MissingPermission")
             @Override
             public void onRequestResponse(int requestId, int result, byte[] data) {
-                log("onRequestResponse(requestId:" + requestId + ", result: " + result);
+                log("onRequestResponse(requestId:" + requestId + ", result:" + result + ")");
 
                 if (requestId == echoRequestId) {
                     log("Got echo response: " + new String(data));
                     blereq.setResponseReceived(echoRequestId);
 
-                    log("Scanning for WiFi networks...");
-                    scanWifiRequestId = requestChannel.sendRequest(SCAN_NETWORKS_TYPE);
-                    blereq.setLastRequestInfo(scanWifiRequestId, SCAN_NETWORKS_TYPE, data);
+                    //if checkbox for clearing networks is true, otherwise do scan for wifi networks stuff
+                    if (true) {
+                        createClearKnownNetworksRequest(null);
+                    } else {
+                        createScanNetworksRequest(null);
+                    }
+                }
 
-                    startRequestTimer(scanWifiRequestId, SCAN_NETWORKS_TYPE, data);
+                if (requestId == clearKnownWifiRequestId) {
+                    blereq.setResponseReceived(clearKnownWifiRequestId);
 
-                    log("SCAN_NETWORKS_TYPE request is " + scanWifiRequestId);
+                    WifiNew.ClearKnownNetworksReply reply = null;
+                    try {
+                        reply = WifiNew.ClearKnownNetworksReply.parseFrom(data);
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+
+                    if (reply != null) {
+                        log("ClearKnownNetworksReply: " + reply);
+                    } else {
+                        log("ClearKnownNetworksReply error?");
+                        //todo leave?
+                    }
+
+                    createScanNetworksRequest(null);
                 }
 
                 if (requestId == scanWifiRequestId) {
@@ -497,40 +555,59 @@ public class MainActivity extends AppCompatActivity {
                     }
 
                     wifiNetworksList.clear(); // Clear previous scan results
-                    if (reply != null) {
-                        log("Found " + reply.getNetworksCount() + " networks");
-                    } else {
-                        log("ScanNetworksReply error");
+
+                    if (result != 0) {
+                        log("ScanNetworksReply error ");
                         //todo leave?
-                    }
+                    } else {
+                        log("Found " + Objects.requireNonNull(reply).getNetworksCount() + " total networks");
 
-                    for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
-                        String ssid = network.getSsid();
-                        if (ssid != "") {
-                            log("  " + ssid + " (" + network.getRssi() + "dB)");
-                            //self.log(network.toString());
-                            wifiNetworksList.add(network); // Add to list for displaying in dialog
+                        for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
+                            String ssid = network.getSsid();
+                            if (!ssid.equals("")) {
+                                log("  " + ssid + " (" + network.getRssi() + "dB)");
+                                wifiNetworksList.add(network); // Add to list for displaying in dialog
+                            }
                         }
-                    }
+                        log("...of which " + wifiNetworksList.size() + " have ssids");
 
-                    showWifiNetworksDialog(); // Call method to show dialog with WiFi networks
+                        // Call method to show dialog with WiFi networks
+                        // Also calls createWifiJoinNewNetworkRequest()
+                        showWifiNetworksDialog();
+                    }
                 }
 
                 if (requestId == wifiJoinNewNetworkRequestId) {
                     blereq.setResponseReceived(wifiJoinNewNetworkRequestId);
-                    WifiNew.JoinNewNetworkReply reply = null;
+                    if(result == 0) {
+                        createGetCurrentNetworkRequest(null);
+                    } else {
+                        log("Error sending network to P2 (" + lastConnectedDevice.getName() + " " + lastConnectedDevice.getAddress() + "), please try again");
+                    }
+                }
+
+                if (requestId == getCurrentNetworkId) {
+                    blereq.setResponseReceived(getCurrentNetworkId);
+
+                    WifiNew.GetCurrentNetworkReply reply = null;
                     try {
-                        reply = WifiNew.JoinNewNetworkReply.parseFrom(data);
+                        reply = WifiNew.GetCurrentNetworkReply.parseFrom(data);
                     } catch (InvalidProtocolBufferException e) {
                         e.printStackTrace();
                     }
 
-                    log("Data: " + data.toString() + " Length: " + data.length);
-                    log("Reply: " + reply.toString());
-                    log("\nFinished. Disconnecting from the device");
+                    if(!reply.getSsid().equals("")) {
+                        log("P2 successfully connected to " + reply.getSsid());
+                        log("\nFinished. Disconnecting from " + lastConnectedDevice.getAddress());
+                        //consider a ping from the particle cloud next
+                    } else {
+                        log("Error reading network from P2 (" + lastConnectedDevice.getName() + " " + lastConnectedDevice.getAddress() + "), please try again");
+                    }
+
                     requestChannel.close();
                     bluetoothGatt.disconnect();
                     bluetoothGatt.close();
+
                 }
             }
 
@@ -539,12 +616,8 @@ public class MainActivity extends AppCompatActivity {
                 log("onRequestError requestId: " + requestId);
             }
         };
-        try {
-            requestChannel = new BleRequestChannel(mobileSecret.getBytes(), requestChannelCallback,
-                    BleRequestChannel.DEFAULT_MAX_CONCURRENT_REQUESTS);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+
+        getNewControlChannel();
 
         scanCallback = new ScanCallback() {
             @RequiresApi(api = Build.VERSION_CODES.R)
@@ -617,12 +690,57 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void createGetCurrentNetworkRequest(byte[] data) {
+        this.log("Requesting current network from P2...");
+        this.getCurrentNetworkId = this.requestChannel.sendRequest(GET_CURRENT_NETWORK_TYPE);
+        startRequestTimer(this.getCurrentNetworkId, GET_CURRENT_NETWORK_TYPE, data);
+        blereq.setLastRequestInfo(this.getCurrentNetworkId, GET_CURRENT_NETWORK_TYPE, data);
+        this.log("GET_CURRENT_NETWORK_TYPE request is " + this.getCurrentNetworkId);
+    }
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void createClearKnownNetworksRequest(byte[] data) {
+        log("Clearing known wifi networks...");
+        clearKnownWifiRequestId = requestChannel.sendRequest(CLEAR_KNOWN_NETWORKS_TYPE);
+        blereq.setLastRequestInfo(clearKnownWifiRequestId, CLEAR_KNOWN_NETWORKS_TYPE, data);
+        startRequestTimer(clearKnownWifiRequestId, CLEAR_KNOWN_NETWORKS_TYPE, data);
+        log("CLEAR_KNOWN_NETWORKS request is " + clearKnownWifiRequestId);
+    }
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void createScanNetworksRequest(byte[] data) {
+        log("Scanning for WiFi networks...");
+        scanWifiRequestId = requestChannel.sendRequest(SCAN_NETWORKS_TYPE);
+        blereq.setLastRequestInfo(scanWifiRequestId, SCAN_NETWORKS_TYPE, data);
+        startRequestTimer(scanWifiRequestId, SCAN_NETWORKS_TYPE, data);
+        log("SCAN_NETWORKS_TYPE request is " + scanWifiRequestId);
+    }
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void createWifiJoinNewNetworkRequest(byte[] data) {
+        log("Sending network and password to P2...");
+        wifiJoinNewNetworkRequestId = requestChannel.sendRequest(JOIN_NEW_NETWORK_TYPE, data);
+        startRequestTimer(wifiJoinNewNetworkRequestId, JOIN_NEW_NETWORK_TYPE, data);
+        blereq.setLastRequestInfo(wifiJoinNewNetworkRequestId, JOIN_NEW_NETWORK_TYPE, data);
+        this.log("JOIN_NEW_NETWORK_TYPE request is " + this.wifiJoinNewNetworkRequestId);
+    }
+
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void resendRequest(int requestId, byte[] data) {
+
         // resending doesn't currently work, return
-        if (false) {
+        if (true) {
             // Logic to resend the request
             log("Cancelling requestId " + requestId);
             requestChannel.cancelRequest(requestId);
+            //log("Timeout for request " + requestId + ", opening a new request channel");
+            //requestChannel.close();
+            //getNewControlChannel();
+            //openControlChannel();
+            //connect(lastConnectedDevice);
 
             if (requestId == echoRequestId) {
                 log("RESENDING echo request: " + new String(data));
@@ -631,35 +749,38 @@ public class MainActivity extends AppCompatActivity {
 
             if (requestId == scanWifiRequestId) {
                 log("RESENDING scanWifiRequestId request: ");
-                log("Scanning for WiFi networks...");
-                scanWifiRequestId = requestChannel.sendRequest(SCAN_NETWORKS_TYPE);
-                blereq.setLastRequestInfo(scanWifiRequestId, SCAN_NETWORKS_TYPE, "".getBytes());
-                startRequestTimer(scanWifiRequestId, SCAN_NETWORKS_TYPE, data);
+                createScanNetworksRequest(data);
+            }
 
-                log("SCAN_NETWORKS_TYPE request is " + scanWifiRequestId);
-
-
+            if (requestId == clearKnownWifiRequestId) {
+                log("RESENDING clearKnownWifiRequestId request: ");
+                createClearKnownNetworksRequest(data);
             }
 
             if (requestId == wifiJoinNewNetworkRequestId) {
                 log("RESENDING wifiJoinNewNetworkRequestId request: " + new String(data));
+                createWifiJoinNewNetworkRequest(data);
+            }
 
-                log("Sending network and password to P2...");
-                wifiJoinNewNetworkRequestId = requestChannel.sendRequest(JOIN_NEW_NETWORK_TYPE, data);
-                startRequestTimer(wifiJoinNewNetworkRequestId, JOIN_NEW_NETWORK_TYPE, data);
-                blereq.setLastRequestInfo(wifiJoinNewNetworkRequestId, JOIN_NEW_NETWORK_TYPE, data);
-                this.log("JOIN_NEW_NETWORK_TYPE request is " + this.wifiJoinNewNetworkRequestId);
+            if (requestId == getCurrentNetworkId) {
+                log("RESENDING getCurrentNetworkId request: " + new String(data));
+                createGetCurrentNetworkRequest(data);
             }
         }
     }
+
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void startRequestTimer(int requestId, int requestType, byte[] data) {
-        Handler handler = new Handler();
+        Handler requestTimerHandler = new Handler();
         int reqTimeout = 0;
         Runnable timeoutRunnable = new Runnable() {
             @Override
             public void run() {
                 if (!blereq.getResponseReceived(requestId)) {
                     resendRequest(requestId, data);
+                } else {
+
                 }
             }
         };
@@ -670,18 +791,29 @@ public class MainActivity extends AppCompatActivity {
                 reqTimeout = 5000;
                 break;
             }
-            case SCAN_NETWORKS_TYPE:
+            case JOIN_NEW_NETWORK_TYPE:
             {
-                reqTimeout = 6000;
+                reqTimeout = 20000;
                 break;
             }
-            case JOIN_NEW_NETWORK_TYPE:
+            case SCAN_NETWORKS_TYPE:
             {
                 reqTimeout = 10000;
                 break;
             }
+            case CLEAR_KNOWN_NETWORKS_TYPE:
+            {
+                reqTimeout = 5000;
+                break;
+            }
+            default:
+            {
+                reqTimeout = 5000;
+                break;
+            }
         }
-        handler.postDelayed(timeoutRunnable, reqTimeout);
+        blereq.setResponseReceived(requestId);
+        requestTimerHandler.postDelayed(timeoutRunnable, reqTimeout);
     }
 
     @SuppressLint("MissingPermission")
@@ -706,8 +838,8 @@ public class MainActivity extends AppCompatActivity {
                 bluetoothGatt.close();
             }
         }
-        foundDevices = new ArrayList<BluetoothDevice>();
-
+        foundScanResults = new ArrayList<ScanResult>();
+        shadowBTDeviceList = new ArrayList<BluetoothDevice>();
         // Setup the callbacks and other initialization logic here
         setupCallbacksAndListeners();
 
@@ -742,7 +874,7 @@ public class MainActivity extends AppCompatActivity {
             // Stops scanning after a pre-defined scan period.
             new Handler().postDelayed(() -> {
                 this.scanning = false;
-                if(foundDevices.isEmpty()) {
+                if(foundScanResults.isEmpty()) {
                     log("BLE scanning timed out, no devices found");
                 } else {
                     showDeviceSelectionDialog(); // Show the dialog here
@@ -768,16 +900,14 @@ public class MainActivity extends AppCompatActivity {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Select a BLE Device");
 
-        String[] deviceNames = new String[foundDevices.size()];
-        for (int i = 0; i < foundDevices.size(); i++) {
-            deviceNames[i] = foundDevices.get(i).getName() + " - " + foundDevices.get(i).getAddress();
+        String[] deviceNames = new String[foundScanResults.size()];
+        for (int i = 0; i < foundScanResults.size(); i++) {
+            deviceNames[i] = foundScanResults.get(i).getDevice().getName() + " - " + foundScanResults.get(i).getDevice().getAddress() + " [rssi:" + foundScanResults.get(i).getRssi() + "]";
         }
 
-        builder.setItems(deviceNames, new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                connect(foundDevices.get(which));
-            }
+        builder.setItems(deviceNames, (dialog, which) -> {
+            lastConnectedDevice = foundScanResults.get(which).getDevice();
+            connect(lastConnectedDevice);
         });
 
         AlertDialog dialog = builder.create();
@@ -789,7 +919,7 @@ public class MainActivity extends AppCompatActivity {
     private void addDevice(ScanResult result) {
         BluetoothDevice device = result.getDevice();
 
-        SparseArray<byte[]> manufacturerDataArray = result.getScanRecord().getManufacturerSpecificData();
+        SparseArray<byte[]> manufacturerDataArray = Objects.requireNonNull(result.getScanRecord()).getManufacturerSpecificData();
         String manufacturerData = "";
         for(int i = 0, size = manufacturerDataArray.size(); i < size; i++) {
             byte[] manufacturerDataBytes = manufacturerDataArray.valueAt(i);
@@ -797,14 +927,16 @@ public class MainActivity extends AppCompatActivity {
             manufacturerData += new String(manufacturerDataBytes, StandardCharsets.UTF_8);
         }
         String deviceName = result.getScanRecord().getDeviceName();
-        if (!deviceName.endsWith(this.setupCode) && !manufacturerData.endsWith(this.setupCode)) {
+        //this.log(deviceName + result.getRssi());
+        if (!Objects.requireNonNull(deviceName).contains(this.setupCode) && !manufacturerData.endsWith(this.setupCode)) {
             this.log("Found " + deviceName + " but it's not matching the setup code");
             return;
         }
 
-        if (!this.foundDevices.contains(device)) {
-            this.foundDevices.add(device);
-            this.log("Found " + deviceName + " [" + device.getAddress() + "]");
+        if (!this.shadowBTDeviceList.contains(device)) {
+            this.shadowBTDeviceList.add(device);
+            this.foundScanResults.add(result);
+            this.log("Found " + deviceName + "- [" + device.getAddress() + "] - [RSSI:" + result.getRssi() + "]");
 
             //todo: delete below if we look for multiple devices and stop after a timeout
             //We're connecting to the first found device, no need to scan further
@@ -821,14 +953,27 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void openControlChannel() {
-        this.log("Ready to open the control channel");
+        if (this.requestChannel.state() == BleRequestChannel.State.NEW) {
+            this.log("Ready to open the control channel");
+            try {
+                this.requestChannel.open();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        } else {
+            this.log("Request channel already opened, skipping");
+        }
+    }
+
+    private void getNewControlChannel() {
+        log("getNewControlChannel() called");
         try {
-            this.requestChannel.open();
+            requestChannel = new BleRequestChannel(mobileSecret.getBytes(), requestChannelCallback,
+                    BleRequestChannel.DEFAULT_MAX_CONCURRENT_REQUESTS);
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
-
     @SuppressLint("MissingPermission")
     private void sendChunk() {
         if (this.bluetoothGatt != null && this.txCharacteristic != null && this.bytesLeft > 0) {
@@ -844,6 +989,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void sendEchoRequest() {
         this.log("Sending echo with: HELLO");
         this.echoRequestId = this.requestChannel.sendRequest(ECHO_REQUEST_TYPE, "HELLO".getBytes());
