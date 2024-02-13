@@ -11,37 +11,83 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="40dp"
-        android:text="Connect"
         android:onClick="onClick"
+        android:text="@string/connect"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.251"
         app:layout_constraintStart_toStartOf="parent" />
+
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/clearNetworksSwitch"
+        android:layout_width="150dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:text="@string/clear_networks_on_connection"
+        app:layout_constraintBottom_toBottomOf="@id/button"
+        app:layout_constraintStart_toEndOf="@+id/button" />
 
     <ScrollView
         android:id="@+id/scrollView"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginStart="20dp"
-        android:layout_marginTop="20dp"
+        android:layout_width="373dp"
+        android:layout_height="368dp"
+        android:layout_marginStart="18dp"
+        android:layout_marginTop="255dp"
         android:layout_marginEnd="20dp"
         android:layout_marginBottom="20dp"
+        android:visibility="invisible"
+        app:layout_constraintBottom_toTopOf="@id/button"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="1.0"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="1.0">
+
+        <TextView
+            android:id="@+id/textView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:textAlignment="viewStart"
+            android:visibility="invisible" />
+    </ScrollView>
+
+    <ProgressBar
+        android:id="@+id/progressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="136dp"
+        android:layout_height="37dp"
+        android:layout_marginBottom="116dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.5"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.2
+
+" />
+
+    <TextView
+        android:id="@+id/statusTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="48dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintHorizontal_bias="0.5"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.1" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/mRecyclerView"
+        android:layout_width="136dp"
+        android:layout_height="253dp"
         app:layout_constraintBottom_toTopOf="@+id/button"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/textView"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text=""
-                app:fontFamily="monospace" />
-        </LinearLayout>
-    </ScrollView>
+        app:layout_constraintTop_toBottomOf="@+id/progressBar" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

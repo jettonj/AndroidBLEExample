@@ -5,6 +5,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
@@ -25,7 +26,6 @@ import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -33,10 +33,14 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.ParcelUuid;
 import android.os.StrictMode;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.util.SparseArray;
 import android.view.View;
+import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -45,12 +49,15 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Objects;
 import java.util.UUID;
 
 import io.particle.device.control.BleRequestChannel;
 import io.particle.device.control.BleRequestChannelCallback;
 import io.particle.device.control.RequestError;
+import io.particle.firmwareprotos.ctrl.cloud.Cloud;
 import io.particle.firmwareprotos.ctrl.wifi.WifiNew;
 
 public class MainActivity extends AppCompatActivity {
@@ -77,6 +84,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int CLEAR_KNOWN_NETWORKS_TYPE = 504;
     private static final int GET_CURRENT_NETWORK_TYPE = 505;
     private static final int SCAN_NETWORKS_TYPE = 506;
+    private static final int CTRL_REQUEST_CLOUD_GET_CONNECTION_STATUS_TYPE = 300;
 
 
 
@@ -88,6 +96,7 @@ public class MainActivity extends AppCompatActivity {
     private ArrayList<ScanResult> foundScanResults;
     private ArrayList<BluetoothDevice> shadowBTDeviceList;
     private BluetoothDevice lastConnectedDevice;
+    private String lastConnectedOriName;
     private BluetoothGattCallback bluetoothGattCallback;
 
     private BluetoothGattCharacteristic txCharacteristic;
@@ -107,10 +116,20 @@ public class MainActivity extends AppCompatActivity {
     private int clearKnownWifiRequestId;
     private int wifiJoinNewNetworkRequestId;
     private int getCurrentNetworkId;
+    private int getCloudConnectedStatusId;
     private int lastRequestId;
     private boolean bleInitFlag = false;
     private boolean scanning = false;
     private int currentScanDelay = 2000; //plan to increment this when a user requests to rescan ("I don't see my system, rescan")
+    private final int scanDelayInc = 1000;
+    private final int maxScanDelay = 5000;
+    private boolean clearKnownNetworksEnable = false;
+    private boolean sendEchoRequestEnable = true;
+    private boolean resendRequestEnable = true;
+    private SwitchCompat clrnetSwitch;
+    private ProgressBar progressBar;
+    private TextView statusTextView;
+    private int progressStatus = 0;
     private Blereq blereq;
     class Blereq
     {
@@ -121,8 +140,9 @@ public class MainActivity extends AppCompatActivity {
         private boolean scanWifiRequestIsComplete = false;
         private boolean wifiJoinNewNetworkRequestIsComplete = false;
         private boolean wifiGetCurrentNetworkIsComplete = false;
-        private boolean wifiClearKnownWifiRequestIdIsComplete = false;
-        private boolean isNewInstance = true;
+        private boolean wifiClearKnownWifiRequestIsComplete = false;
+        private boolean getCloudConnectedStatusIsComplete = false;
+
 
         public void setLastRequestInfo(int id, int idType, byte[] data) {
             this.lastRequestId = id;
@@ -142,7 +162,9 @@ public class MainActivity extends AppCompatActivity {
             } else if (requestId == getCurrentNetworkId) {
                 retVal = wifiGetCurrentNetworkIsComplete;
             } else if (requestId == clearKnownWifiRequestId) {
-                retVal = wifiClearKnownWifiRequestIdIsComplete;
+                retVal = wifiClearKnownWifiRequestIsComplete;
+            } else if (requestId == getCloudConnectedStatusId) {
+                retVal = getCloudConnectedStatusIsComplete;
             }
             return retVal;
         }
@@ -156,7 +178,9 @@ public class MainActivity extends AppCompatActivity {
             } else if (requestId == getCurrentNetworkId) {
                 wifiGetCurrentNetworkIsComplete = true;
             } else if (requestId == clearKnownWifiRequestId) {
-                wifiClearKnownWifiRequestIdIsComplete = true;
+                wifiClearKnownWifiRequestIsComplete = true;
+            } else if (requestId == getCloudConnectedStatusId) {
+                getCloudConnectedStatusIsComplete = true;
             }
         }
         public void setLastResponseReceived() {
@@ -169,7 +193,9 @@ public class MainActivity extends AppCompatActivity {
             } else if (this.lastRequestId == getCurrentNetworkId) {
                 wifiGetCurrentNetworkIsComplete = true;
             } else if (this.lastRequestId == clearKnownWifiRequestId) {
-                wifiClearKnownWifiRequestIdIsComplete = true;
+                wifiClearKnownWifiRequestIsComplete = true;
+            } else if (this.lastRequestId == getCloudConnectedStatusId) {
+                getCloudConnectedStatusIsComplete = true;
             }
         }
     }
@@ -181,11 +207,11 @@ public class MainActivity extends AppCompatActivity {
             AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
             builder.setTitle("Select a WiFi network");
 
-            ArrayList<String> listing = new ArrayList<String>();
+            ArrayList<String> listing = new ArrayList<>();
 
             for (WifiNew.ScanNetworksReply.Network network: wifiNetworksList)
             {
-                listing.add(network.getSsid());
+                listing.add(network.getSsid() + " (" + network.getRssi() + " dBm)");
             }
 
             // Convert ArrayList to CharSequence array for use in AlertDialog
@@ -207,57 +233,102 @@ public class MainActivity extends AppCompatActivity {
     private void promptForWifiPassword(final WifiNew.ScanNetworksReply.Network selectedNetwork) {
         // Create an EditText to input the password
         final EditText passwordInput = new EditText(MainActivity.this);
-        passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD); //change to TYPE_TEXT_VARIATION_PASSWORD if we don't want to see it
+        passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD); //todo change to TYPE_TEXT_VARIATION_PASSWORD if we don't want to see it
         passwordInput.setHint("Password");
 
-        // Create a dialog to enter the password
-        new AlertDialog.Builder(MainActivity.this)
-                .setTitle("Enter Password for " + selectedNetwork.getSsid())
-                .setView(passwordInput)
-                .setPositiveButton("Connect", (dialog, whichButton) -> {
+        // todo use a layout with app:endIconMode="password_toggle" or something instead of an alert dialog
+        // If the network has no security, connect to it without a password prompt
+        if (selectedNetwork.getSecurity() == WifiNew.Security.NO_SECURITY) {
+            log("Connecting to " + selectedNetwork.getSsid() + " with no password ");
+            connectToNetwork(selectedNetwork, "");
+        } else {
+            // Create a dialog to enter the password
+            final AlertDialog alertDialog = new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("Enter Password for " + selectedNetwork.getSsid())
+                    .setView(passwordInput)
+                    .setPositiveButton("Connect", (dialog, whichButton) -> {
+                        String password = passwordInput.getText().toString();
+                        log("Connecting to " + selectedNetwork.getSsid() + " with password " + password); //todo may want to get rid of logging plain password here
+                        // Connect to the selected network with the provided password
+                        connectToNetwork(selectedNetwork, password);
+                    })
+                    .setNegativeButton("Cancel", (dialog, whichButton) -> {
+                        dialog.dismiss();
+                    })
+
+                    .show();
+
+            final Button connectButton = alertDialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            connectButton.setEnabled(false);
+            passwordInput.addTextChangedListener(new TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence charSequence, int i, int i1, int i2) {
+
+                }
+
+                @Override
+                public void onTextChanged(CharSequence charSequence, int i, int i1, int i2) {
                     String password = passwordInput.getText().toString();
-                    log("Connecting to " + selectedNetwork.getSsid() + " with password " + password);
-                    // Connect to the selected network with the provided password
-                    connectToNetwork(selectedNetwork, password);
-                })
-                .setNegativeButton("Cancel", (dialog, whichButton) -> dialog.dismiss())
-                .show();
+                    // Allow password to be sent if it is at least 8 characters long
+                    if (password.length() >= 8) {
+                        connectButton.setEnabled(true);
+                    } else {
+                        connectButton.setEnabled(false);
+                    }
+                }
+
+                @Override
+                public void afterTextChanged(Editable editable) {
+
+                }
+            });
+        }
     }
 
     // Connect to the selected WiFi network
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
-    private void connectToNetwork(WifiNew.ScanNetworksReply.Network netw, String password) {
+    private void connectToNetwork(@NonNull WifiNew.ScanNetworksReply.Network netw, String password) {
 
         WifiNew.Credentials creds;
         WifiNew.JoinNewNetworkRequest newNetworkRequest;
 
-        if (password == "") {
+        if (netw.getSecurity() == WifiNew.Security.NO_SECURITY) {
             creds = WifiNew.Credentials.newBuilder()
                     .setType(WifiNew.CredentialsType.NO_CREDENTIALS)
-                    .build();
-
-            newNetworkRequest = WifiNew.JoinNewNetworkRequest.newBuilder()
-                    .setSsid(netw.getSsid())
-                    .setSecurity(WifiNew.Security.NO_SECURITY)
-                    .setCredentials(creds)
                     .build();
         } else {
             creds = WifiNew.Credentials.newBuilder()
                     .setType(WifiNew.CredentialsType.PASSWORD)
                     .setPassword(password)
                     .build();
-
-            newNetworkRequest = WifiNew.JoinNewNetworkRequest.newBuilder()
-                    .setSsid(netw.getSsid())
-                    .setSecurity(netw.getSecurity())
-                    .setCredentials(creds)
-                    .build();
         }
+        newNetworkRequest = WifiNew.JoinNewNetworkRequest.newBuilder()
+                .setSsid(netw.getSsid())
+                .setSecurity(netw.getSecurity())
+                .setCredentials(creds)
+                .build();
 
+        this.log("Security type: " + netw.getSecurity());
         createWifiJoinNewNetworkRequest(newNetworkRequest.toByteArray());
     }
 
+    // Listener for switch change
+    private void setSwitchListeners() {
+        clrnetSwitch = findViewById(R.id.clearNetworksSwitch);
+        clrnetSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            this.clearKnownNetworksEnable = isChecked;
+        });
+    }
+
+    private void updateProgress(int progress, String status) {
+        progressBar = findViewById(R.id.progressBar);
+        statusTextView = findViewById(R.id.statusTextView);
+        //I can get progress from last requestIdType?
+        //this.blereq.requestIdType
+        progressBar.setProgress(progress, true);
+        statusTextView.setText(status);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -268,6 +339,8 @@ public class MainActivity extends AppCompatActivity {
         StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder(StrictMode.getVmPolicy())
                 .detectLeakedClosableObjects()
                 .build());
+
+        this.setSwitchListeners();
 
         this.logs = "";
         this.log("Press Connect to start");
@@ -328,6 +401,7 @@ public class MainActivity extends AppCompatActivity {
         if (status == BluetoothGatt.GATT_SUCCESS) {
             if (newState == BluetoothGatt.STATE_CONNECTED) {
                 this.log("Connected to " + deviceAddress + "!");
+                updateProgress(10,"Connected to " + lastConnectedOriName);
                 gatt.discoverServices();
             } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                 this.log("Disconnected from " + deviceAddress + "!");
@@ -367,8 +441,10 @@ public class MainActivity extends AppCompatActivity {
     @SuppressLint("MissingPermission")
     public void onCharacteristicRead_cb(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, int status) {
         if (status == BluetoothGatt.GATT_SUCCESS) {
-            Integer version = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 0);
 
+            gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
+
+            Integer version = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT8, 0);
             if (version != 2) {
                 this.log("Protocol version " + version + " is not supported");
                 return;
@@ -395,8 +471,15 @@ public class MainActivity extends AppCompatActivity {
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
     public void onRequestChannelOpen() {
-        this.log("Request channel opened");
-        this.sendEchoRequest();
+        this.log("Control channel opened");
+        updateProgress(30,"Handshake Complete");
+        if(sendEchoRequestEnable) {
+            this.sendEchoRequest();
+        } else if (clearKnownNetworksEnable){
+            this.createClearKnownNetworksRequest(null);
+        } else {
+            this.createScanNetworksRequest(null);
+        }
     }
 
     public boolean ensureCharacteristics(BluetoothGattService service) {
@@ -427,9 +510,23 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+    //Update clearKnownNetworksEnable based on the switch state
+    private void updateClearKnownNetworksEnable() {
+        clrnetSwitch = findViewById(R.id.clearNetworksSwitch);
+        if (this.clrnetSwitch.isChecked()) {
+            this.clearKnownNetworksEnable = true;
+        } else {
+            this.clearKnownNetworksEnable = false;
+        }
+
+    }
+
     @RequiresApi(api = Build.VERSION_CODES.R)
     public void onClick(View view) {
         this.log("\nLooking for " + this.setupCode + "...");
+        this.updateProgress(0,"Scanning for Ori systems");
+
+        this.updateClearKnownNetworksEnable();
 
         this.initBluetooth();
 
@@ -476,8 +573,10 @@ public class MainActivity extends AppCompatActivity {
         TextView textView = findViewById(R.id.textView);
         textView.setText(this.logs);
         ScrollView scrollView = findViewById(R.id.scrollView);
-        scrollView.fullScroll(View.FOCUS_DOWN);
         System.out.println(line);
+        scrollView.fullScroll(View.FOCUS_DOWN);
+        //scrollView.post(() -> scrollView.scrollTo(0, scrollView.getHeight()));
+
     }
 
     @SuppressLint("MissingPermission")
@@ -485,10 +584,11 @@ public class MainActivity extends AppCompatActivity {
     private void setupCallbacksAndListeners() {
 
         if (blereq != null) {
+            //Set current response as received so retry function doesn't try to call it after the object has been reset
             blereq.setLastResponseReceived();
-        } else {
-            blereq = new Blereq();
         }
+        blereq = new Blereq();
+
         requestChannelCallback = new BleRequestChannelCallback() {
             @Override
             public void onChannelOpen() {
@@ -497,6 +597,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onChannelWrite(byte[] data) {
+                //System.out.println("w>" + BleRequestChannel.bytesToHex(data));
                 byte[] buf = new byte[bytesLeft + data.length];
                 System.arraycopy(outgoingData, outgoingData.length - bytesLeft, buf, 0, bytesLeft);
                 System.arraycopy(data, 0, buf, bytesLeft, data.length);
@@ -516,9 +617,10 @@ public class MainActivity extends AppCompatActivity {
                 if (requestId == echoRequestId) {
                     log("Got echo response: " + new String(data));
                     blereq.setResponseReceived(echoRequestId);
+                    updateProgress(40,"Echo response received");
 
                     //if checkbox for clearing networks is true, otherwise do scan for wifi networks stuff
-                    if (true) {
+                    if (clearKnownNetworksEnable) {
                         createClearKnownNetworksRequest(null);
                     } else {
                         createScanNetworksRequest(null);
@@ -565,7 +667,7 @@ public class MainActivity extends AppCompatActivity {
                         for (WifiNew.ScanNetworksReply.Network network: reply.getNetworksList()) {
                             String ssid = network.getSsid();
                             if (!ssid.equals("")) {
-                                log("  " + ssid + " (" + network.getRssi() + "dB)");
+                                log("  " + ssid + " (" + network.getBssid() + ") (" + network.getRssi() + " dBm)");
                                 wifiNetworksList.add(network); // Add to list for displaying in dialog
                             }
                         }
@@ -573,7 +675,11 @@ public class MainActivity extends AppCompatActivity {
 
                         // Call method to show dialog with WiFi networks
                         // Also calls createWifiJoinNewNetworkRequest()
-                        showWifiNetworksDialog();
+                        if (!wifiNetworksList.isEmpty()) {
+                            showWifiNetworksDialog();
+                        } else {
+                            updateProgress(45, "Your Ori system was unable to find any wifi networks.\nPower cycle the system and try again.");
+                        }
                     }
                 }
 
@@ -598,22 +704,68 @@ public class MainActivity extends AppCompatActivity {
 
                     if(!reply.getSsid().equals("")) {
                         log("P2 successfully connected to " + reply.getSsid());
-                        log("\nFinished. Disconnecting from " + lastConnectedDevice.getAddress());
-                        //consider a ping from the particle cloud next
                     } else {
                         log("Error reading network from P2 (" + lastConnectedDevice.getName() + " " + lastConnectedDevice.getAddress() + "), please try again");
                     }
 
-                    requestChannel.close();
-                    bluetoothGatt.disconnect();
-                    bluetoothGatt.close();
+                    updateProgress(85,"Getting cloud connection state...");
+                    createGetCloudConnectionStatusRequest(null);
 
+                }
+
+                if (requestId == getCloudConnectedStatusId) {
+                    if(!resendRequestEnable) {
+                        blereq.setResponseReceived(getCloudConnectedStatusId);
+                    }
+
+                    Cloud.GetConnectionStatusReply reply = null;
+
+                    try {
+                        reply = Cloud.GetConnectionStatusReply.parseFrom(data);
+                    } catch (InvalidProtocolBufferException e) {
+                        e.printStackTrace();
+                    }
+
+                    switch(Objects.requireNonNull(reply).getStatus()) {
+                        case CONNECTED:
+                            if(resendRequestEnable) {
+                                // Only set when connected, so that the retry can do it
+                                blereq.setResponseReceived(getCloudConnectedStatusId);
+                            }
+                            updateProgress(100,"Your Ori system is connected!");
+                            log("P2 successfully connected to the Particle Cloud!");
+                            log("\nFinished. Disconnecting from " + lastConnectedDevice.getAddress());
+
+                            requestChannel.close();
+                            bluetoothGatt.disconnect();
+                            bluetoothGatt.close();
+                            break;
+                        case CONNECTING:
+                            log("P2 still trying to connect to the Particle Cloud...");
+                            updateProgress(90,"Ori system is connecting to the cloud...");
+                            //todo handle a timeout or number of retries for cloud connection
+                            if(!resendRequestEnable) {
+                                // Resend a request in 2 seconds
+                                new Handler().postDelayed(() ->
+                                        createGetCloudConnectionStatusRequest(null), 2000);
+                            }
+                            break;
+                        default:
+                            log("P2 isn't connecting yet (state " + reply.getStatus() + ")");
+                            if(!resendRequestEnable) {
+                                // Resend a request in 2 seconds
+                                new Handler().postDelayed(() ->
+                                        createGetCloudConnectionStatusRequest(null), 2000);
+                            }
+                    }
                 }
             }
 
             @Override
             public void onRequestError(int requestId, RequestError error) {
                 log("onRequestError requestId: " + requestId);
+                log(error.getMessage());
+                log(String.valueOf(error.getCause()));
             }
         };
 
@@ -639,14 +791,14 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
                 super.onConnectionStateChange(gatt, status, newState);
-
+                System.out.println("onConnectionStateChange");
                 runOnUiThread(() -> onConnectionStateChange_cb(gatt, status, newState));
             }
 
             @Override
             public void onServicesDiscovered(BluetoothGatt gatt, int status) {
                 super.onServicesDiscovered(gatt, status);
-
+                System.out.println("onServicesDiscovered");
                 bluetoothGatt = gatt;
                 runOnUiThread(() -> onServicesDiscovered_cb(gatt, status));
             }
@@ -654,20 +806,24 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onCharacteristicRead(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic, int status) {
                 super.onCharacteristicRead(gatt, characteristic, status);
-
+                System.out.println("onCharacteristicRead");
                 runOnUiThread(() -> onCharacteristicRead_cb(gatt, characteristic, status));
             }
 
             @Override
             public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic) {
                 super.onCharacteristicChanged(gatt, characteristic);
+                System.out.println("onCharacteristicChanged: " + characteristic.getUuid() + "\n> " + BleRequestChannel.bytesToHex(characteristic.getValue()));
 
-                runOnUiThread(() -> requestChannel.read(characteristic.getValue()));
+                byte[] characteristicValue = characteristic.getValue();
+                runOnUiThread(() -> requestChannel.read(characteristicValue));
+                //requestChannel.read(characteristic.getValue());
             }
 
             @Override
             public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
                 super.onCharacteristicWrite(gatt, characteristic, status);
+                System.out.println("onCharacteristicWrite");
 
                 if (bytesLeft > 0) {
                     runOnUiThread(() -> sendChunk());
@@ -679,7 +835,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
                 super.onDescriptorWrite(gatt, descriptor, status);
-
+                System.out.println("onDescriptorWrite");
                 if (status != BluetoothGatt.GATT_SUCCESS) {
                     log("Failed to update CCCD descriptor");
                     return;
@@ -703,6 +859,7 @@ public class MainActivity extends AppCompatActivity {
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void createClearKnownNetworksRequest(byte[] data) {
         log("Clearing known wifi networks...");
+        updateProgress(40,"Sending clear networks request...");
         clearKnownWifiRequestId = requestChannel.sendRequest(CLEAR_KNOWN_NETWORKS_TYPE);
         blereq.setLastRequestInfo(clearKnownWifiRequestId, CLEAR_KNOWN_NETWORKS_TYPE, data);
         startRequestTimer(clearKnownWifiRequestId, CLEAR_KNOWN_NETWORKS_TYPE, data);
@@ -712,6 +869,7 @@ public class MainActivity extends AppCompatActivity {
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void createScanNetworksRequest(byte[] data) {
         log("Scanning for WiFi networks...");
+        updateProgress(45,"Sending scan networks request...");
         scanWifiRequestId = requestChannel.sendRequest(SCAN_NETWORKS_TYPE);
         blereq.setLastRequestInfo(scanWifiRequestId, SCAN_NETWORKS_TYPE, data);
         startRequestTimer(scanWifiRequestId, SCAN_NETWORKS_TYPE, data);
@@ -721,6 +879,7 @@ public class MainActivity extends AppCompatActivity {
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void createWifiJoinNewNetworkRequest(byte[] data) {
         log("Sending network and password to P2...");
+        updateProgress(75,"Sending join network request...");
         wifiJoinNewNetworkRequestId = requestChannel.sendRequest(JOIN_NEW_NETWORK_TYPE, data);
         startRequestTimer(wifiJoinNewNetworkRequestId, JOIN_NEW_NETWORK_TYPE, data);
         blereq.setLastRequestInfo(wifiJoinNewNetworkRequestId, JOIN_NEW_NETWORK_TYPE, data);
@@ -729,10 +888,21 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
+    private void createGetCloudConnectionStatusRequest(byte[] data) {
+        log("Getting cloud connection state...");
+
+        getCloudConnectedStatusId = requestChannel.sendRequest(CTRL_REQUEST_CLOUD_GET_CONNECTION_STATUS_TYPE, data);
+        startRequestTimer(getCloudConnectedStatusId, CTRL_REQUEST_CLOUD_GET_CONNECTION_STATUS_TYPE, data);
+        blereq.setLastRequestInfo(getCloudConnectedStatusId, CTRL_REQUEST_CLOUD_GET_CONNECTION_STATUS_TYPE, data);
+        this.log("CTRL_REQUEST_CLOUD_GET_CONNECTION_STATUS_TYPE request is " + this.getCloudConnectedStatusId);
+    }
+
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
     private void resendRequest(int requestId, byte[] data) {
 
         // resending doesn't currently work, return
-        if (true) {
+        if (resendRequestEnable) {
             // Logic to resend the request
             log("Cancelling requestId " + requestId);
             requestChannel.cancelRequest(requestId);
@@ -741,6 +911,8 @@ public class MainActivity extends AppCompatActivity {
             //getNewControlChannel();
             //openControlChannel();
             //connect(lastConnectedDevice);
+            //log("Timeout for request " + requestId + ", Soft reset");
+            //requestChannel.softReset();
 
             if (requestId == echoRequestId) {
                 log("RESENDING echo request: " + new String(data));
@@ -763,8 +935,13 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (requestId == getCurrentNetworkId) {
-                log("RESENDING getCurrentNetworkId request: " + new String(data));
+                log("RESENDING getCurrentNetworkId request: ");
                 createGetCurrentNetworkRequest(data);
+            }
+
+            if (requestId == getCloudConnectedStatusId) {
+                log("RESENDING getCloudConnectedStatusId request: ");
+                createGetCloudConnectionStatusRequest(data);
             }
         }
     }
@@ -806,13 +983,18 @@ public class MainActivity extends AppCompatActivity {
                 reqTimeout = 5000;
                 break;
             }
+            case CTRL_REQUEST_CLOUD_GET_CONNECTION_STATUS_TYPE:
+            {
+                reqTimeout = 2000;
+                break;
+            }
             default:
             {
                 reqTimeout = 5000;
                 break;
             }
         }
-        blereq.setResponseReceived(requestId);
+
         requestTimerHandler.postDelayed(timeoutRunnable, reqTimeout);
     }
 
@@ -863,7 +1045,7 @@ public class MainActivity extends AppCompatActivity {
                 .build();
 
         ScanSettings scanSettings = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+                .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
                 .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
                 .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
                 .setNumOfMatches(ScanSettings.MATCH_NUM_ONE_ADVERTISEMENT)
@@ -874,12 +1056,20 @@ public class MainActivity extends AppCompatActivity {
             // Stops scanning after a pre-defined scan period.
             new Handler().postDelayed(() -> {
                 this.scanning = false;
+                bluetoothLeScanner.stopScan(scanCallback);
+
                 if(foundScanResults.isEmpty()) {
-                    log("BLE scanning timed out, no devices found");
+                    if (currentScanDelay + scanDelayInc < maxScanDelay) {
+                        currentScanDelay += scanDelayInc;
+                    } else {
+                        currentScanDelay = maxScanDelay;
+                    }
+                    log("BLE scanning timed out, no devices found, rescanning for " + currentScanDelay + " ms");
+                    startBleScan();
                 } else {
                     showDeviceSelectionDialog(); // Show the dialog here
                 }
-                bluetoothLeScanner.stopScan(scanCallback);
+
             }, currentScanDelay);
 
             scanning = true;
@@ -894,19 +1084,74 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // Gets the system's nice name from the 6 character Ble DeviceName
+    private String getOriDeviceName(String fullBleDeviceName) {
+        if(fullBleDeviceName.length() != 6) {
+            return "System"; // This should never happen
+        }
+
+        String oriSystemSubstr = fullBleDeviceName.substring(fullBleDeviceName.length() - 3);
+        String oriSystemStr;
+
+        switch (oriSystemSubstr) {
+            case "001":
+            {
+                oriSystemStr = "Pocket Studio";
+                break;
+            }
+            case "002":
+            {
+                oriSystemStr = "Pocket Closet";
+                break;
+            }
+            case "003":
+            {
+                oriSystemStr = "Pocket Office";
+                break;
+            }
+            case "004":
+            {
+                oriSystemStr = "Cloud Bed";
+                break;
+            }
+            case "005":
+            {
+                oriSystemStr = "Cloud Bed Table";
+                break;
+            }
+            default:
+            {
+                oriSystemStr = "System";
+            }
+        }
+
+        return oriSystemStr;
+    }
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void showDeviceSelectionDialog() {
+
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Select a BLE Device");
+        builder.setTitle("Select an Ori System");
 
         String[] deviceNames = new String[foundScanResults.size()];
+
+        //sort based on rssi, higher is closer
+        Collections.sort(foundScanResults, Comparator.comparingInt(ScanResult::getRssi).reversed());
+
         for (int i = 0; i < foundScanResults.size(); i++) {
-            deviceNames[i] = foundScanResults.get(i).getDevice().getName() + " - " + foundScanResults.get(i).getDevice().getAddress() + " [rssi:" + foundScanResults.get(i).getRssi() + "]";
+            try {
+                Objects.requireNonNull(foundScanResults.get(i).getScanRecord());
+                Objects.requireNonNull(foundScanResults.get(i).getScanRecord().getDeviceName());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            deviceNames[i] = "Ori " + getOriDeviceName(foundScanResults.get(i).getScanRecord().getDeviceName()) + " - " + foundScanResults.get(i).getDevice().getAddress() + " [" + foundScanResults.get(i).getRssi() + " dBm]";
         }
 
         builder.setItems(deviceNames, (dialog, which) -> {
             lastConnectedDevice = foundScanResults.get(which).getDevice();
+            lastConnectedOriName = "Ori " + getOriDeviceName(foundScanResults.get(which).getScanRecord().getDeviceName());
             connect(lastConnectedDevice);
         });
 
@@ -917,31 +1162,34 @@ public class MainActivity extends AppCompatActivity {
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void addDevice(ScanResult result) {
-        BluetoothDevice device = result.getDevice();
+        try {
+            // do i need these first two if the last two are subsets of them?
+            Objects.requireNonNull(result);
+            Objects.requireNonNull(result.getScanRecord());
+            Objects.requireNonNull(result.getScanRecord().getManufacturerSpecificData());
+            Objects.requireNonNull(result.getScanRecord().getDeviceName());
 
-        SparseArray<byte[]> manufacturerDataArray = Objects.requireNonNull(result.getScanRecord()).getManufacturerSpecificData();
-        String manufacturerData = "";
-        for(int i = 0, size = manufacturerDataArray.size(); i < size; i++) {
-            byte[] manufacturerDataBytes = manufacturerDataArray.valueAt(i);
-            // Concat all data
-            manufacturerData += new String(manufacturerDataBytes, StandardCharsets.UTF_8);
-        }
-        String deviceName = result.getScanRecord().getDeviceName();
-        //this.log(deviceName + result.getRssi());
-        if (!Objects.requireNonNull(deviceName).contains(this.setupCode) && !manufacturerData.endsWith(this.setupCode)) {
-            this.log("Found " + deviceName + " but it's not matching the setup code");
-            return;
-        }
+            BluetoothDevice device = result.getDevice();
+            //System.out.println("addDevice() called: " + device + " result " + result);
+            //System.out.println("device.getname " + device.getName() + " scanrecord.getdevicename " + result.getScanRecord().getDeviceName());
 
-        if (!this.shadowBTDeviceList.contains(device)) {
-            this.shadowBTDeviceList.add(device);
-            this.foundScanResults.add(result);
-            this.log("Found " + deviceName + "- [" + device.getAddress() + "] - [RSSI:" + result.getRssi() + "]");
+            SparseArray<byte[]> manufacturerDataArray = result.getScanRecord().getManufacturerSpecificData();
+            String manufacturerData = "";
+            for (int i = 0, size = manufacturerDataArray.size(); i < size; i++) {
+                byte[] manufacturerDataBytes = manufacturerDataArray.valueAt(i);
+                // Concat all data
+                manufacturerData += new String(manufacturerDataBytes, StandardCharsets.UTF_8);
+            }
+            String deviceName = result.getScanRecord().getDeviceName();
 
-            //todo: delete below if we look for multiple devices and stop after a timeout
-            //We're connecting to the first found device, no need to scan further
-            //this.bluetoothLeScanner.stopScan(this.scanCallback);
-            //this.connect(device);
+            if (deviceName.contains(this.setupCode) && !this.shadowBTDeviceList.contains(device)) {
+                this.shadowBTDeviceList.add(device);
+                this.foundScanResults.add(result);
+                this.log("Found " + deviceName + " - [" + device.getAddress() + "] - [" + result.getRssi() + " dBm]");
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
@@ -949,25 +1197,31 @@ public class MainActivity extends AppCompatActivity {
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void connect(BluetoothDevice device) {
         this.log("Connecting to " + device.getAlias() + "...");
+        updateProgress(5,"Connecting to " + lastConnectedOriName + "...");
         device.connectGatt(getApplicationContext(), false, this.bluetoothGattCallback);
     }
 
     private void openControlChannel() {
         if (this.requestChannel.state() == BleRequestChannel.State.NEW) {
             this.log("Ready to open the control channel");
+            updateProgress(15,"Beginning handshake...");
             try {
                 this.requestChannel.open();
             } catch (Exception e) {
                 e.printStackTrace();
             }
         } else {
-            this.log("Request channel already opened, skipping");
+            this.log("Control channel already opened, skipping");
         }
     }
 
     private void getNewControlChannel() {
-        log("getNewControlChannel() called");
+        if(requestChannel != null) {
+            log("Closing active control channel");
+            requestChannel.close();
+        }
         try {
+            log("Trying to open a new control channel");
             requestChannel = new BleRequestChannel(mobileSecret.getBytes(), requestChannelCallback,
                     BleRequestChannel.DEFAULT_MAX_CONCURRENT_REQUESTS);
         } catch (Exception e) {
@@ -992,12 +1246,18 @@ public class MainActivity extends AppCompatActivity {
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void sendEchoRequest() {
-        this.log("Sending echo with: HELLO");
-        this.echoRequestId = this.requestChannel.sendRequest(ECHO_REQUEST_TYPE, "HELLO".getBytes());
-        startRequestTimer(this.echoRequestId, ECHO_REQUEST_TYPE, "HELLO".getBytes());
-        blereq.setLastRequestInfo(lastRequestId, ECHO_REQUEST_TYPE, "HELLO".getBytes());
+        String echoStr = "I thought not. It's not a story the Jedi would tell you. It's a Sith legend. " +
+                "Darth Plagueis was a Dark Lord of the Sith, so powerful and so wise he could use the Force " +
+                "to influence the midichlorians to create life… He had such a knowledge of the dark side, " +
+                "he could even keep the ones he cared about from dying.";
+        this.log("Sending echo with: " + echoStr.length() + " bytes");
+        this.echoRequestId = this.requestChannel.sendRequest(ECHO_REQUEST_TYPE, echoStr.getBytes());
+        startRequestTimer(this.echoRequestId, ECHO_REQUEST_TYPE, echoStr.getBytes());
+        blereq.setLastRequestInfo(lastRequestId, ECHO_REQUEST_TYPE, echoStr.getBytes());
 
         this.log("ECHO_REQUEST_TYPE request is " + this.echoRequestId);
+        updateProgress(35,"Sending echo request...");
+
     }
 }
 

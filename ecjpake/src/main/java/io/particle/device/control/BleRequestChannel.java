@@ -169,6 +169,10 @@ public class BleRequestChannel {
         this.state = State.NEW;
     }
 
+    public void softReset() {
+        this.buf = ByteBuffer.allocate(0);
+        this.buf.order(ByteOrder.LITTLE_ENDIAN);
+    }
     /**
      * Open the channel.
      *
@@ -233,13 +237,19 @@ public class BleRequestChannel {
      *
      * @param data The received data.
      */
-    public void read(byte[] data) {
+    public void read(byte[] data /*, byte[] cdata*/) {
+        /*if (data != cdata) {
+            System.out.println("CVALUE DOES NOT MATCH");
+            System.out.println("> " + bytesToHex(data));
+            System.out.println("< " + bytesToHex(cdata));
+            assert(false);
+        }*/
+
         if (this.state != State.OPEN && this.state != State.OPENING) {
             throw new IllegalStateException("Invalid channel state");
         }
         try {
-            ByteBuffer buf2 = ByteBuffer.wrap(this.buf.array(),0,this.buf.remaining());
-            System.out.println("> " + bytesToHex(data));
+            System.out.println("R>" + bytesToHex(data));
             this.appendToInputBuf(data);
             //System.out.println("read() dataLen: " + data.length + " bufRem: " + this.buf.remaining());
             if (this.reading) {
@@ -258,7 +268,7 @@ public class BleRequestChannel {
                 int packetLen = payloadLen + (isOpen ? RESPONSE_PACKET_OVERHEAD : HANDSHAKE_PACKET_OVERHEAD);
 
                 //System.out.println(bytesToHex(buf.array()));
-                System.out.println("this.buf.remaining() " + this.buf.remaining() + " packetLen: " + packetLen + " (" + payloadLen + "+" + (isOpen ? RESPONSE_PACKET_OVERHEAD : HANDSHAKE_PACKET_OVERHEAD) +")");
+                //System.out.println("this.buf.remaining() " + this.buf.remaining() + " packetLen: " + packetLen + " (" + payloadLen + "+" + (isOpen ? RESPONSE_PACKET_OVERHEAD : HANDSHAKE_PACKET_OVERHEAD) +")");
 
                 if (this.buf.remaining() < packetLen) {
                     break;
@@ -266,7 +276,7 @@ public class BleRequestChannel {
                 ByteBuffer packet = this.buf.slice();
                 packet.limit(packetLen);
                 if (isOpen) {
-                    System.out.println("Sending to readResponse()");
+                    //System.out.println("Sending to readResponse()");
                     this.readResponse(packet);
                 } else {
                     this.readHandshake(packet);
