@@ -60,7 +60,7 @@ import io.particle.device.control.RequestError;
 import io.particle.firmwareprotos.ctrl.cloud.Cloud;
 import io.particle.firmwareprotos.ctrl.wifi.WifiNew;
 
-public class MainActivity extends AppCompatActivity {
+public class BleActivity extends AppCompatActivity {
     private String logs;
 
     // Device setup code. By default, 6 characters of the serial number
@@ -220,7 +220,7 @@ public class MainActivity extends AppCompatActivity {
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void showWifiNetworksDialog() {
         runOnUiThread(() -> {
-            AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
+            AlertDialog.Builder builder = new AlertDialog.Builder(BleActivity.this);
             builder.setTitle("Select a WiFi network");
 
             ArrayList<String> listing = new ArrayList<>();
@@ -248,7 +248,7 @@ public class MainActivity extends AppCompatActivity {
     @RequiresApi(api = Build.VERSION_CODES.R)
     private void promptForWifiPassword(final WifiNew.ScanNetworksReply.Network selectedNetwork) {
         // Create an EditText to input the password
-        final EditText passwordInput = new EditText(MainActivity.this);
+        final EditText passwordInput = new EditText(BleActivity.this);
         passwordInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD); //todo change to TYPE_TEXT_VARIATION_PASSWORD if we don't want to see it
         passwordInput.setHint("Password");
 
@@ -259,7 +259,7 @@ public class MainActivity extends AppCompatActivity {
             connectToNetwork(selectedNetwork, "");
         } else {
             // Create a dialog to enter the password
-            final AlertDialog alertDialog = new AlertDialog.Builder(MainActivity.this)
+            final AlertDialog alertDialog = new AlertDialog.Builder(BleActivity.this)
                     .setTitle("Enter Password for " + selectedNetwork.getSsid())
                     .setView(passwordInput)
                     .setPositiveButton("Connect", (dialog, whichButton) -> {
@@ -351,7 +351,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
 
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
+        setContentView(R.layout.ble_activity_main);
 
         StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder(StrictMode.getVmPolicy())
                 .detectLeakedClosableObjects()
