@@ -94,6 +94,10 @@ public class MainActivity extends AppCompatActivity {
     private BluetoothGatt bluetoothGatt;
     private ScanCallback scanCallback;
     private ArrayList<ScanResult> foundScanResults;
+    //private ArrayList<OriSystemModel> oriSystemModels;
+    //private int[] oriSystemImages = {R.drawable.ori_interface, R.drawable.pocket_studio_im,
+    //        R.drawable.pocket_closet_im, R.drawable.pocket_office_im, R.drawable.cloud_bed_im,
+    //        R.drawable.cloud_bed_table_im};
     private ArrayList<BluetoothDevice> shadowBTDeviceList;
     private BluetoothDevice lastConnectedDevice;
     private String lastConnectedOriName;
@@ -199,6 +203,18 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     }
+
+    /*
+    private void initOriSystemModels() {
+        String[] oriSystemNames = getResources().getStringArray(R.array.system_names_txt);
+        oriSystemModels = new ArrayList<>();
+
+        for(int i = 0; i < oriSystemNames.length; i++) {
+            oriSystemModels.add(new OriSystemModel(oriSystemNames[i],
+                    oriSystemImages[i]));
+        }
+    }
+    */
 
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
@@ -324,6 +340,7 @@ public class MainActivity extends AppCompatActivity {
     private void updateProgress(int progress, String status) {
         progressBar = findViewById(R.id.progressBar);
         statusTextView = findViewById(R.id.statusTextView);
+        progressBar.setVisibility(View.VISIBLE);
         //I can get progress from last requestIdType?
         //this.blereq.requestIdType
         progressBar.setProgress(progress, true);
@@ -342,10 +359,14 @@ public class MainActivity extends AppCompatActivity {
 
         this.setSwitchListeners();
 
+        //RecyclerView recyclerView = findViewById(R.id.mRecyclerView);
+        //initOriSystemModels();
+        //Ori_RecyclerViewAdapter adapter = new Ori_RecyclerViewAdapter(this, oriSystemModels);
+        // recyclerView.setAdapter(adapter);
+        //recyclerView.setLayoutManager(new LinearLayoutManager(this));
+
         this.logs = "";
         this.log("Press Connect to start");
-        MainActivity self = this;
-
     }
 
     @Override
@@ -513,12 +534,7 @@ public class MainActivity extends AppCompatActivity {
     //Update clearKnownNetworksEnable based on the switch state
     private void updateClearKnownNetworksEnable() {
         clrnetSwitch = findViewById(R.id.clearNetworksSwitch);
-        if (this.clrnetSwitch.isChecked()) {
-            this.clearKnownNetworksEnable = true;
-        } else {
-            this.clearKnownNetworksEnable = false;
-        }
-
+        this.clearKnownNetworksEnable = this.clrnetSwitch.isChecked();
     }
 
     @RequiresApi(api = Build.VERSION_CODES.R)
@@ -649,6 +665,7 @@ public class MainActivity extends AppCompatActivity {
 
                 if (requestId == scanWifiRequestId) {
                     blereq.setResponseReceived(scanWifiRequestId);
+
                     WifiNew.ScanNetworksReply reply = null;
                     try {
                         reply = WifiNew.ScanNetworksReply.parseFrom(data);
@@ -676,6 +693,7 @@ public class MainActivity extends AppCompatActivity {
                         // Call method to show dialog with WiFi networks
                         // Also calls createWifiJoinNewNetworkRequest()
                         if (!wifiNetworksList.isEmpty()) {
+                            updateProgress(45,"Scan networks response received");
                             showWifiNetworksDialog();
                         } else {
                             updateProgress(45, "Your Ori system was unable to find any wifi networks.\nPower cycle the system and try again.");
@@ -1020,8 +1038,8 @@ public class MainActivity extends AppCompatActivity {
                 bluetoothGatt.close();
             }
         }
-        foundScanResults = new ArrayList<ScanResult>();
-        shadowBTDeviceList = new ArrayList<BluetoothDevice>();
+        foundScanResults = new ArrayList<>();
+        shadowBTDeviceList = new ArrayList<>();
         // Setup the callbacks and other initialization logic here
         setupCallbacksAndListeners();
 
@@ -1067,6 +1085,7 @@ public class MainActivity extends AppCompatActivity {
                     log("BLE scanning timed out, no devices found, rescanning for " + currentScanDelay + " ms");
                     startBleScan();
                 } else {
+                    updateProgress(0, "Stopped scanning for Ori systems");
                     showDeviceSelectionDialog(); // Show the dialog here
                 }
 
@@ -1126,6 +1145,13 @@ public class MainActivity extends AppCompatActivity {
         }
 
         return oriSystemStr;
+    }
+
+    //unfinished RecyclerView stuff
+    @SuppressLint("MissingPermission")
+    @RequiresApi(api = Build.VERSION_CODES.R)
+    private void showDeviceSelectionCards() {
+
     }
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.R)
@@ -1257,7 +1283,6 @@ public class MainActivity extends AppCompatActivity {
 
         this.log("ECHO_REQUEST_TYPE request is " + this.echoRequestId);
         updateProgress(35,"Sending echo request...");
-
     }
 }
 

@@ -1,9 +1,11 @@
 <resources>
     <string name="app_name">BLE Example</string>
+    <string name="ble_view_name">Connect your Ori system</string>
     <string name="clear_networks_on_connection">Clear networks on connection?</string>
     <string name="connect">Connect</string>
     <string name="ori_system_type">Ori system type</string>
     <string-array name="system_names_txt">
+        <item>System</item>
         <item>Pocket Studio</item>
         <item>Pocket Closet</item>
         <item>Pocket Office</item>
